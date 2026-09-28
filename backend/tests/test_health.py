@@ -1,7 +1,11 @@
+import logging
+
 from fastapi.testclient import TestClient
 
 from slideai.api.main import create_app
+from slideai.core.config import Settings
 from slideai.core.errors import DomainError
+from slideai.core.logging import JsonFormatter
 
 
 def test_liveness_does_not_require_dependencies() -> None:
@@ -64,3 +68,47 @@ def test_domain_error_uses_stable_envelope_and_request_id() -> None:
             "request_id": "request-test-123",
         }
     }
+
+
+def test_cors_only_exposes_configured_frontend_origins() -> None:
+    client = TestClient(
+        create_app(
+            Settings(cors_origins="http://allowed.example", _env_file=None),
+            readiness_probe=lambda: {"postgres": "ok", "redis": "ok", "chroma": "ok"},
+        )
+    )
+    headers = {
+        "Origin": "http://allowed.example",
+        "Access-Control-Request-Method": "GET",
+    }
+
+    allowed = client.options("/api/v1/tasks", headers=headers)
+    blocked = client.options(
+        "/api/v1/tasks",
+        headers={**headers, "Origin": "http://untrusted.example"},
+    )
+
+    assert allowed.status_code == 200
+    assert allowed.headers["access-control-allow-origin"] == "http://allowed.example"
+    assert "access-control-allow-origin" not in blocked.headers
+
+
+def test_json_logs_exclude_secrets_prompts_and_exception_text() -> None:
+    formatter = JsonFormatter()
+    record = logging.LogRecord(
+        "slideai.security",
+        logging.ERROR,
+        __file__,
+        1,
+        "provider key=%s document=%s",
+        ("secret-token-123", "private customer report"),
+        ValueError("Authorization: Bearer leaked-secret"),
+    )
+    record.api_key = "secret-token-123"
+    record.prompt = "private customer report"
+
+    output = formatter.format(record)
+
+    assert "secret-token-123" not in output
+    assert "private customer report" not in output
+    assert "leaked-secret" not in output

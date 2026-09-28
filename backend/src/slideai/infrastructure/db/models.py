@@ -3,6 +3,7 @@ from typing import Any
 from uuid import UUID
 
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     CheckConstraint,
     DateTime,
@@ -39,6 +40,8 @@ class GenerationTaskRow(Base):
     evaluation_result: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     revision_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    active_workflow_event_id: Mapped[UUID | None] = mapped_column(PGUUID(as_uuid=True))
+    workflow_fencing_generation: Mapped[int | None] = mapped_column(BigInteger)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

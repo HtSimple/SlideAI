@@ -275,6 +275,10 @@ function formatDate(value: string): string {
 .task-center__heading {
   margin-bottom: 24px;
 }
+.task-center {
+  width: 100%;
+  min-width: 0;
+}
 .eyebrow {
   margin: 0 0 6px;
   color: var(--color-primary-700);
@@ -356,6 +360,8 @@ input:focus-visible,
     color-mix(in srgb, var(--color-primary-600) 16%, transparent);
 }
 .task-panel {
+  max-width: 100%;
+  min-width: 0;
   overflow: hidden;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-panel);
@@ -383,6 +389,9 @@ input:focus-visible,
   font: inherit;
 }
 .table-scroll {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
   overflow-x: auto;
 }
 table {
@@ -491,7 +500,9 @@ tbody th {
   gap: 8px;
 }
 .sr-only {
-  position: absolute;
+  position: fixed;
+  top: 0;
+  left: 0;
   width: 1px;
   height: 1px;
   overflow: hidden;

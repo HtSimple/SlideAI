@@ -30,6 +30,7 @@ class Settings(BaseSettings):
     chunk_overlap_tokens: int = Field(default=120, ge=0)
     retrieval_top_k: int = Field(default=6, ge=1, le=100)
     model_retry_count: int = Field(default=2, ge=0, le=5)
+    workflow_lock_ttl_seconds: int = Field(default=60, ge=5, le=3600)
     embedding_provider: str = "fake"
     embedding_base_url: str = ""
     embedding_model_id: str = ""

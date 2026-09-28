@@ -6,12 +6,20 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from slideai.core.errors import DomainError
 from slideai.domain.content.models import Citation, SlideContent
-from slideai.infrastructure.db.models import SlidePageRow
+from slideai.infrastructure.db.models import GenerationTaskRow, SlidePageRow
 
 
 class SqlSlideRepository:
-    def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
+    def __init__(
+        self,
+        sessions: async_sessionmaker[AsyncSession],
+        *,
+        require_running: bool = False,
+        fencing_generation: int | None = None,
+    ) -> None:
         self.sessions = sessions
+        self.require_running = require_running
+        self.fencing_generation = fencing_generation
 
     async def list_for_task(self, task_id: UUID) -> list[SlideContent]:
         async with self.sessions() as session:
@@ -35,6 +43,24 @@ class SqlSlideRepository:
             raise DomainError("SLIDE_BATCH_INVALID", "A batch cannot contain duplicate pages.")
 
         async with self.sessions() as session, session.begin():
+            if self.require_running:
+                task = await session.get(GenerationTaskRow, task_id, with_for_update=True)
+                if task is None:
+                    raise DomainError("TASK_NOT_FOUND", "Task was not found.")
+                if task.status == "CANCELLED":
+                    raise DomainError("WORKFLOW_CANCELLED", "The task was cancelled.")
+                if task.status != "RUNNING":
+                    raise DomainError(
+                        "TASK_CONFLICT", "A slide batch can only be saved by a running task."
+                    )
+                if (
+                    self.fencing_generation is None
+                    or task.workflow_fencing_generation != self.fencing_generation
+                ):
+                    raise DomainError(
+                        "WORKFLOW_LOCK_LOST", "The workflow worker lost its task lock."
+                    )
+
             rows = (
                 await session.scalars(
                     select(SlidePageRow)

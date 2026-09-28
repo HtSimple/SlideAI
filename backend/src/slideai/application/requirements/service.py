@@ -15,16 +15,29 @@ class TaskRepository(Protocol):
     async def update(self, task: TaskRecord, *, expected_version: int) -> None: ...
 
 
+class WorkflowOutboxWriter(Protocol):
+    async def update_with_outbox(
+        self,
+        task: TaskRecord,
+        *,
+        expected_version: int,
+        event_type: str,
+        payload: dict[str, object],
+    ) -> UUID: ...
+
+
 class RequirementService:
     def __init__(
         self,
         repository: TaskRepository,
         queue: WorkflowQueue,
         *,
+        outbox_writer: WorkflowOutboxWriter | None = None,
         clock: Callable[[], datetime] | None = None,
     ) -> None:
         self.repository = repository
         self.queue = queue
+        self.outbox_writer = outbox_writer
         self.clock = clock or (lambda: datetime.now(UTC))
 
     async def get(self, task_id: UUID) -> tuple[TaskRecord, list[str]]:
@@ -78,14 +91,20 @@ class RequirementService:
                 "updated_at": self.clock(),
             }
         )
-        await self.repository.update(updated, expected_version=expected_version)
-        self.queue.enqueue_resume(
-            task_id,
-            {
-                "kind": "requirement_confirmed",
-                "structured_requirement": requirement.model_dump(mode="json"),
-            },
-        )
+        resume = {
+            "kind": "requirement_confirmed",
+            "structured_requirement": requirement.model_dump(mode="json"),
+        }
+        if self.outbox_writer is not None:
+            await self.outbox_writer.update_with_outbox(
+                updated,
+                expected_version=expected_version,
+                event_type="workflow.resume",
+                payload={"resume": resume},
+            )
+        else:
+            await self.repository.update(updated, expected_version=expected_version)
+            self.queue.enqueue_resume(task_id, resume)
         return updated
 
     async def _get(self, task_id: UUID) -> TaskRecord:

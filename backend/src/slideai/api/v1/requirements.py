@@ -40,12 +40,25 @@ class ConfirmRequirementRequest(BaseModel):
     expected_version: int = Field(ge=1)
 
 
+class CancelWorkflowRequest(BaseModel):
+    expected_version: int = Field(ge=1)
+
+
 @router.post("/{task_id}/start", response_model=WorkflowStateResponse, status_code=202)
 async def start_workflow(
     task_id: UUID,
     service: Annotated[WorkflowControlService, Depends(get_workflow_control_service)],
 ) -> WorkflowStateResponse:
     return _workflow_response(await service.start(task_id))
+
+
+@router.post("/{task_id}/cancel", response_model=WorkflowStateResponse, status_code=202)
+async def cancel_workflow(
+    task_id: UUID,
+    body: CancelWorkflowRequest,
+    service: Annotated[WorkflowControlService, Depends(get_workflow_control_service)],
+) -> WorkflowStateResponse:
+    return _workflow_response(await service.cancel(task_id, expected_version=body.expected_version))
 
 
 @router.get("/{task_id}/requirement", response_model=RequirementResponse)

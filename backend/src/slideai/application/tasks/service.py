@@ -1,4 +1,4 @@
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Protocol
 from uuid import UUID
@@ -33,10 +33,12 @@ class TaskService:
         repository: TaskRepository,
         *,
         model_catalog: ModelCatalog | None = None,
+        before_delete: Callable[[UUID], Awaitable[None]] | None = None,
         clock: Callable[[], datetime] | None = None,
     ) -> None:
         self.repository = repository
         self.model_catalog = model_catalog
+        self.before_delete = before_delete
         self.clock = clock or (lambda: datetime.now(UTC))
 
     async def create(self, command: CreateTaskCommand) -> TaskRecord:
@@ -110,7 +112,10 @@ class TaskService:
 
     async def delete(self, task_id: UUID, *, expected_version: int | None = None) -> None:
         task = await self.get(task_id)
-        if task.status not in {TaskStatus.DRAFT, TaskStatus.READY}:
+        deletion_reserved = (
+            task.status == TaskStatus.CANCELLED and task.current_stage == "deletion_requested"
+        )
+        if not deletion_reserved and task.status not in {TaskStatus.DRAFT, TaskStatus.READY}:
             raise DomainError("TASK_CONFLICT", "Only draft or ready tasks can be deleted.")
         if expected_version is not None and task.version != expected_version:
             raise DomainError(
@@ -118,6 +123,22 @@ class TaskService:
                 "Task changed since it was loaded.",
                 {"expected_version": expected_version, "actual_version": task.version},
             )
+
+        if not deletion_reserved:
+            reserved = task.model_copy(
+                update={
+                    "status": TaskStatus.CANCELLED,
+                    "current_stage": "deletion_requested",
+                    "version": task.version + 1,
+                    "updated_at": self.clock(),
+                }
+            )
+            # Claim deletion through the same versioned row update used by start/resume.
+            # Whichever operation wins the database CAS prevents the other from proceeding.
+            await self.repository.update(reserved, expected_version=task.version)
+
+        if self.before_delete is not None:
+            await self.before_delete(task_id)
         await self.repository.delete(task_id)
 
     def _validate_model_preference(self, preference: ModelPreference) -> None:

@@ -64,13 +64,14 @@ services:
       CHUNK_OVERLAP_TOKENS: ${CHUNK_OVERLAP_TOKENS:-120}
       RETRIEVAL_TOP_K: ${RETRIEVAL_TOP_K:-6}
       MODEL_RETRY_COUNT: ${MODEL_RETRY_COUNT:-2}
+      WORKFLOW_LOCK_TTL_SECONDS: ${WORKFLOW_LOCK_TTL_SECONDS:-60}
       EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-fake}
       EMBEDDING_BASE_URL: ${EMBEDDING_BASE_URL:-}
       EMBEDDING_MODEL_ID: ${EMBEDDING_MODEL_ID:-}
       EMBEDDING_API_KEY: ${EMBEDDING_API_KEY:-}
       EMBEDDING_DIMENSIONS: ${EMBEDDING_DIMENSIONS:-64}
       EMBEDDING_VERSION: ${EMBEDDING_VERSION:-v1}
-      CORS_ORIGINS: http://localhost:4173
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:4173}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     volumes:
       - ./backend:/app
@@ -84,7 +85,7 @@ services:
       chroma:
         condition: service_healthy
     ports:
-      - "127.0.0.1:8000:8000"
+      - "${HOST_BIND_ADDRESS:-127.0.0.1}:${API_HOST_PORT:-8000}:8000"
     command: ["uv", "run", "uvicorn", "slideai.api.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=3)"]
@@ -107,7 +108,7 @@ services:
         condition: service_healthy
       chroma:
         condition: service_healthy
-    command: ["uv", "run", "celery", "-A", "slideai.workers.celery_app:celery_app", "worker", "--loglevel=INFO", "--concurrency=${WORKER_CONCURRENCY:-2}", "--hostname=slideai@%h"]
+    command: ["uv", "run", "celery", "-A", "slideai.workers.celery_app:celery_app", "worker", "--beat", "--loglevel=INFO", "--concurrency=${WORKER_CONCURRENCY:-2}", "--hostname=slideai@%h"]
     healthcheck:
       test: ["CMD-SHELL", "uv run celery -A slideai.workers.celery_app:celery_app inspect ping --timeout=5 | grep -q pong"]
       interval: 30s
@@ -127,7 +128,7 @@ services:
       api:
         condition: service_healthy
     ports:
-      - "127.0.0.1:4173:4173"
+      - "${HOST_BIND_ADDRESS:-127.0.0.1}:${FRONTEND_HOST_PORT:-4173}:4173"
     command: ["pnpm", "dev"]
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4173').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]

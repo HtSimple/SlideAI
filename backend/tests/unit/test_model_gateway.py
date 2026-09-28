@@ -117,6 +117,44 @@ async def test_gateway_does_not_retry_401() -> None:
 
 
 @pytest.mark.asyncio
+async def test_gateway_reports_retryable_error_when_every_model_is_exhausted() -> None:
+    provider = QueueProvider(
+        {
+            "primary": [
+                ModelTransientError("temporary", error_type="timeout"),
+                ModelTransientError("temporary", error_type="timeout"),
+                ModelTransientError("temporary", error_type="timeout"),
+            ],
+            "fallback": [
+                ModelTransientError("temporary", error_type="unavailable"),
+                ModelTransientError("temporary", error_type="unavailable"),
+                ModelTransientError("temporary", error_type="unavailable"),
+            ],
+        }
+    )
+    gateway = ModelGateway(
+        model_catalog=catalog(),
+        providers={"fake": provider},
+        sleep=lambda _: _no_wait(),
+    )
+    complexity = TaskComplexity(tier=ComplexityTier.ADVANCED, total_score=9, factors={})
+
+    with pytest.raises(ModelTransientError, match="All configured models failed") as failure:
+        await gateway.invoke_structured(
+            task_id="70f25504-e0ae-43e0-a85c-7b0d38469c73",
+            node="write_slides",
+            messages=[{"role": "user", "content": "summarize"}],
+            output_schema=Summary,
+            preference=ModelPreference(mode="manual", model_key="primary"),
+            complexity=complexity,
+            idempotency_key="task:write:1",
+        )
+
+    assert failure.value.error_type == "fallback_exhausted"
+    assert provider.calls == ["primary"] * 3 + ["fallback"] * 3
+
+
+@pytest.mark.asyncio
 async def test_gateway_repairs_structured_output_once() -> None:
     provider = QueueProvider(
         {"primary": [{"private": "SENSITIVE DOCUMENT BODY"}, {"text": "Recovered"}]}

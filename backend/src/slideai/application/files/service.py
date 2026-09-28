@@ -18,7 +18,7 @@ class FileRepository(Protocol):
     async def get(
         self, task_id: UUID, file_id: UUID, *, include_deleted: bool = False
     ) -> SourceFile | None: ...
-    async def list(self, task_id: UUID) -> list[SourceFile]: ...
+    async def list(self, task_id: UUID, *, include_deleted: bool = False) -> list[SourceFile]: ...
     async def replace_chunks(
         self, task_id: UUID, file_id: UUID, chunks: list[DocumentChunk]
     ) -> None: ...
@@ -129,6 +129,35 @@ class FileService:
     async def ensure_task(self, task_id: UUID) -> None:
         if not await self.repository.ensure_task(task_id):
             raise DomainError("TASK_NOT_FOUND", "Task was not found.")
+
+    async def cleanup_task_files(self, task_id: UUID) -> None:
+        await self.ensure_task(task_id)
+        source_files = await self.repository.list(task_id, include_deleted=True)
+        for source_file in source_files:
+            deleted = source_file
+            if source_file.status != FileStatus.DELETED:
+                deleted = await self.repository.mark_deleted(task_id, source_file.id)
+                if deleted is None:
+                    continue
+            try:
+                cleaned = (
+                    await self.cleanup.cleanup_deleted_file(task_id, deleted.id)
+                    if self.cleanup is not None
+                    else False
+                )
+            except Exception as error:
+                raise DomainError(
+                    "FILE_CLEANUP_UNAVAILABLE",
+                    (
+                        "Task files could not be fully removed; retry task deletion "
+                        "after cleanup recovers."
+                    ),
+                ) from error
+            if not cleaned:
+                raise DomainError(
+                    "FILE_CLEANUP_UNAVAILABLE",
+                    "Task files are still in use; retry task deletion after processing finishes.",
+                )
 
     async def retry(self, task_id: UUID, file_id: UUID) -> SourceFile:
         source_file = await self.repository.get(task_id, file_id)

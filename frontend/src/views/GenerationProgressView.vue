@@ -7,6 +7,7 @@ import { resolveTaskRoute } from "../domain/task-routing";
 import { apiErrorMessage } from "../api/client";
 import { submitEvaluationDecision } from "../api/evaluation";
 import { getSlides } from "../api/content";
+import { cancelWorkflow } from "../api/workflows";
 
 const route = useRoute();
 const router = useRouter();
@@ -111,6 +112,24 @@ async function decideEvaluation(
     await taskQuery.refetch();
   } catch (error) {
     actionMessage.value = apiErrorMessage(error, "提交评估操作失败，请重试。");
+  } finally {
+    actionBusy.value = false;
+  }
+}
+
+async function cancelRunningWorkflow(): Promise<void> {
+  if (!task.value || !isRunning.value || actionBusy.value) return;
+  actionBusy.value = true;
+  actionMessage.value = "";
+  try {
+    await cancelWorkflow(taskId, task.value.version);
+    active.value = false;
+    await taskQuery.refetch();
+  } catch (error) {
+    actionMessage.value = apiErrorMessage(
+      error,
+      "取消任务失败，请刷新后重试。",
+    );
   } finally {
     actionBusy.value = false;
   }
@@ -258,6 +277,16 @@ onUnmounted(() => {
         <RouterLink class="button button--secondary" to="/tasks"
           >返回任务中心</RouterLink
         >
+        <button
+          v-if="isRunning"
+          class="button button--secondary"
+          type="button"
+          :disabled="actionBusy"
+          @click="cancelRunningWorkflow"
+        >
+          {{ actionBusy ? "正在取消…" : "取消任务" }}
+        </button>
+        <p v-if="actionMessage" role="alert">{{ actionMessage }}</p>
         <section
           v-if="task.status === 'WAITING_USER_FEEDBACK' && evaluation"
           class="evaluation-decision"

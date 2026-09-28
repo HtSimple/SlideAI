@@ -19,6 +19,17 @@ class FileService(Protocol):
     async def list(self, task_id: UUID) -> list[SourceFile]: ...
 
 
+class WorkflowOutboxWriter(Protocol):
+    async def update_with_outbox(
+        self,
+        task: TaskRecord,
+        *,
+        expected_version: int,
+        event_type: str,
+        payload: dict[str, Any],
+    ) -> UUID: ...
+
+
 class WorkflowControlService:
     def __init__(
         self,
@@ -26,11 +37,13 @@ class WorkflowControlService:
         files: FileService,
         queue: WorkflowQueue,
         *,
+        outbox_writer: WorkflowOutboxWriter | None = None,
         clock: Callable[[], datetime] | None = None,
     ) -> None:
         self.tasks = tasks
         self.files = files
         self.queue = queue
+        self.outbox_writer = outbox_writer
         self.clock = clock or (lambda: datetime.now(UTC))
 
     async def start(self, task_id: UUID) -> TaskRecord:
@@ -51,14 +64,51 @@ class WorkflowControlService:
                 "updated_at": self.clock(),
             }
         )
-        await self.tasks.update(updated, expected_version=task.version)
-        try:
-            self.queue.enqueue_start(task_id)
-        except Exception as error:
-            raise DomainError(
-                "WORKFLOW_QUEUE_UNAVAILABLE", "The task could not be queued for processing."
-            ) from error
+        if self.outbox_writer is not None:
+            await self.outbox_writer.update_with_outbox(
+                updated,
+                expected_version=task.version,
+                event_type="workflow.start",
+                payload={},
+            )
+        else:
+            await self.tasks.update(updated, expected_version=task.version)
+            try:
+                self.queue.enqueue_start(task_id)
+            except Exception as error:
+                raise DomainError(
+                    "WORKFLOW_QUEUE_UNAVAILABLE", "The task could not be queued for processing."
+                ) from error
         return updated
+
+    async def cancel(self, task_id: UUID, *, expected_version: int) -> TaskRecord:
+        task = await self._get(task_id)
+        if task.version != expected_version:
+            raise DomainError(
+                "VERSION_CONFLICT",
+                "Task changed since it was loaded.",
+                {"expected_version": expected_version, "actual_version": task.version},
+            )
+        if task.status not in {
+            TaskStatus.RUNNING,
+            TaskStatus.FAILED_RETRYABLE,
+            TaskStatus.WAITING_REQUIREMENT_INPUT,
+            TaskStatus.WAITING_OUTLINE_CONFIRMATION,
+            TaskStatus.WAITING_USER_FEEDBACK,
+        }:
+            raise DomainError(
+                "TASK_CONFLICT", "This task cannot be cancelled in its current state."
+            )
+        cancelled = task.model_copy(
+            update={
+                "status": TaskStatus.CANCELLED,
+                "current_stage": "cancelled",
+                "version": task.version + 1,
+                "updated_at": self.clock(),
+            }
+        )
+        await self.tasks.update(cancelled, expected_version=task.version)
+        return cancelled
 
     async def decide_evaluation(
         self,
@@ -89,23 +139,31 @@ class WorkflowControlService:
                 "updated_at": self.clock(),
             }
         )
-        await self.tasks.update(updated, expected_version=task.version)
-        try:
-            self.queue.enqueue_resume(task_id, decision)
-        except Exception as error:
-            latest = await self._get(task_id)
-            restored = latest.model_copy(
-                update={
-                    "status": TaskStatus.WAITING_USER_FEEDBACK,
-                    "current_stage": "evaluation_review",
-                    "version": latest.version + 1,
-                    "updated_at": self.clock(),
-                }
+        if self.outbox_writer is not None:
+            await self.outbox_writer.update_with_outbox(
+                updated,
+                expected_version=task.version,
+                event_type="workflow.resume",
+                payload={"resume": decision},
             )
-            await self.tasks.update(restored, expected_version=latest.version)
-            raise DomainError(
-                "WORKFLOW_QUEUE_UNAVAILABLE", "The evaluation decision could not be queued."
-            ) from error
+        else:
+            await self.tasks.update(updated, expected_version=task.version)
+            try:
+                self.queue.enqueue_resume(task_id, decision)
+            except Exception as error:
+                latest = await self._get(task_id)
+                restored = latest.model_copy(
+                    update={
+                        "status": TaskStatus.WAITING_USER_FEEDBACK,
+                        "current_stage": "evaluation_review",
+                        "version": latest.version + 1,
+                        "updated_at": self.clock(),
+                    }
+                )
+                await self.tasks.update(restored, expected_version=latest.version)
+                raise DomainError(
+                    "WORKFLOW_QUEUE_UNAVAILABLE", "The evaluation decision could not be queued."
+                ) from error
         return updated
 
     async def _get(self, task_id: UUID) -> TaskRecord:

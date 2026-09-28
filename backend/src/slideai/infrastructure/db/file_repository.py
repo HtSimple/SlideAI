@@ -97,13 +97,14 @@ class SqlFileRepository:
             row = await session.scalar(statement)
             return _source_file(row) if row else None
 
-    async def list(self, task_id: UUID) -> list[SourceFile]:
+    async def list(self, task_id: UUID, *, include_deleted: bool = False) -> list[SourceFile]:
         async with self.sessions() as session:
+            statement = select(SourceFileRow).where(SourceFileRow.task_id == task_id)
+            if not include_deleted:
+                statement = statement.where(SourceFileRow.deleted_at.is_(None))
             rows = (
                 await session.scalars(
-                    select(SourceFileRow)
-                    .where(SourceFileRow.task_id == task_id, SourceFileRow.deleted_at.is_(None))
-                    .order_by(SourceFileRow.created_at, SourceFileRow.id)
+                    statement.order_by(SourceFileRow.created_at, SourceFileRow.id)
                 )
             ).all()
             return [_source_file(row) for row in rows]

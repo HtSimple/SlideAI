@@ -15,6 +15,7 @@ vi.mock("axios", () => ({
 import {
   confirmOutline,
   confirmRequirement,
+  cancelWorkflow,
   getOutline,
   getRequirement,
   startTask,
@@ -40,11 +41,13 @@ describe("workflow API client", () => {
     await getOutline("task-1");
     await updateOutline("task-1", 4, {} as never);
     await confirmOutline("task-1", 5);
+    await cancelWorkflow("task-1", 6);
 
     expect(api.post.mock.calls.map(([url]) => url)).toEqual([
       "/api/v1/tasks/task-1/start",
       "/api/v1/tasks/task-1/requirement/confirm",
       "/api/v1/tasks/task-1/outline/confirm",
+      "/api/v1/tasks/task-1/cancel",
     ]);
     expect(api.get.mock.calls.map(([url]) => url)).toEqual([
       "/api/v1/tasks/task-1/requirement",

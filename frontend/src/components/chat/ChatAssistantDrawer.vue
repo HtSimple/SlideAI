@@ -368,7 +368,9 @@ function isLatestUndoable(revisionId?: string | null): boolean {
   font-size: 12px;
 }
 .sr-only {
-  position: absolute;
+  position: fixed;
+  top: 0;
+  left: 0;
   width: 1px;
   height: 1px;
   overflow: hidden;

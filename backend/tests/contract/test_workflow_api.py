@@ -160,6 +160,30 @@ def test_missing_requirement_enters_clarification() -> None:
     assert queue.started == [UUID(task["id"])]
 
 
+def test_running_workflow_can_be_cancelled_with_version_check() -> None:
+    client, _, queue = _client()
+    task = _create_task(client)
+    task_id = UUID(task["id"])
+    started = client.post(f"/api/v1/tasks/{task_id}/start")
+    assert started.status_code == 202
+
+    cancelled = client.post(
+        f"/api/v1/tasks/{task_id}/cancel",
+        json={"expected_version": started.json()["version"]},
+    )
+    stale = client.post(
+        f"/api/v1/tasks/{task_id}/cancel",
+        json={"expected_version": started.json()["version"]},
+    )
+
+    assert cancelled.status_code == 202
+    assert cancelled.json()["status"] == "CANCELLED"
+    assert cancelled.json()["current_stage"] == "cancelled"
+    assert stale.status_code == 409
+    assert stale.json()["error"]["code"] == "VERSION_CONFLICT"
+    assert queue.started == [task_id]
+
+
 def test_requirement_can_be_completed_and_resumed() -> None:
     client, repository, queue = _client()
     task = _create_task(client)

@@ -16,7 +16,11 @@ celery_app = Celery(
     "slideai",
     broker=settings.redis_url,
     backend=settings.redis_url,
-    include=["slideai.workers.file_tasks", "slideai.workers.workflow_tasks"],
+    include=[
+        "slideai.workers.file_tasks",
+        "slideai.workers.outbox_tasks",
+        "slideai.workers.workflow_tasks",
+    ],
 )
 celery_app.conf.update(  # pyright: ignore[reportUnknownMemberType]
     accept_content=["json"],
@@ -27,6 +31,12 @@ celery_app.conf.update(  # pyright: ignore[reportUnknownMemberType]
     task_track_started=True,
     timezone="UTC",
     enable_utc=True,
+    beat_schedule={
+        "publish-slideai-outbox": {
+            "task": "slideai.workers.publish_outbox",
+            "schedule": 5.0,
+        }
+    },
 )
 
 

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from slideai.core.errors import DomainError
 from slideai.domain.content.models import SlideProgress
 from slideai.domain.tasks.models import TaskRecord
-from slideai.infrastructure.db.models import GenerationTaskRow, ModelCallRow
+from slideai.infrastructure.db.models import GenerationTaskRow, ModelCallRow, OutboxEventRow
 
 
 class SqlTaskRepository:
@@ -77,15 +77,123 @@ class SqlTaskRepository:
                 )
             _apply_record(row, task)
 
-    async def update_progress(self, task_id: UUID, progress: SlideProgress) -> None:
+    async def update_with_outbox(
+        self,
+        task: TaskRecord,
+        *,
+        expected_version: int,
+        event_type: str,
+        payload: dict[str, Any],
+    ) -> UUID:
+        event_id = uuid4()
+        async with self.sessions() as session, session.begin():
+            row = await session.scalar(
+                select(GenerationTaskRow).where(GenerationTaskRow.id == task.id).with_for_update()
+            )
+            actual_version = row.version if row else None
+            if row is None or actual_version != expected_version:
+                raise DomainError(
+                    "VERSION_CONFLICT",
+                    "Task changed since it was loaded.",
+                    {"expected_version": expected_version, "actual_version": actual_version},
+                )
+            _apply_record(row, task)
+            if event_type in {"workflow.start", "workflow.resume"}:
+                row.active_workflow_event_id = event_id
+            session.add(
+                OutboxEventRow(
+                    id=event_id,
+                    event_type=event_type,
+                    aggregate_id=task.id,
+                    payload=payload,
+                )
+            )
+        return event_id
+
+    async def is_active_workflow_event(self, task_id: UUID, event_id: UUID) -> bool:
+        async with self.sessions() as session:
+            active_event_id = await session.scalar(
+                select(GenerationTaskRow.active_workflow_event_id).where(
+                    GenerationTaskRow.id == task_id
+                )
+            )
+            return active_event_id == event_id
+
+    async def claim_workflow_lease(
+        self, task_id: UUID, event_id: UUID | None, fencing_generation: int
+    ) -> bool:
+        async with self.sessions() as session, session.begin():
+            row = await session.get(GenerationTaskRow, task_id, with_for_update=True)
+            if row is None or row.status != "RUNNING":
+                return False
+            if event_id is not None and row.active_workflow_event_id != event_id:
+                return False
+            if fencing_generation <= (row.workflow_fencing_generation or 0):
+                return False
+            row.workflow_fencing_generation = fencing_generation
+            return True
+
+    async def workflow_fencing_generation(self, task_id: UUID) -> int:
+        async with self.sessions() as session:
+            generation = await session.scalar(
+                select(GenerationTaskRow.workflow_fencing_generation).where(
+                    GenerationTaskRow.id == task_id
+                )
+            )
+            return generation or 0
+
+    async def update_progress(
+        self, task_id: UUID, progress: SlideProgress, *, fencing_generation: int
+    ) -> None:
         async with self.sessions() as session, session.begin():
             row = await session.get(GenerationTaskRow, task_id, with_for_update=True)
             if row is None:
                 raise DomainError("TASK_NOT_FOUND", "Task was not found.")
+            if row.status == "CANCELLED":
+                raise DomainError("WORKFLOW_CANCELLED", "The task was cancelled.")
+            if row.status != "RUNNING":
+                raise DomainError(
+                    "TASK_CONFLICT", "Progress can only be updated by a running task."
+                )
+            if row.workflow_fencing_generation != fencing_generation:
+                raise DomainError("WORKFLOW_LOCK_LOST", "The workflow worker lost its task lock.")
             row.generation_progress = progress.model_dump(mode="json")
             row.current_stage = "write_slides"
             row.version += 1
             row.updated_at = datetime.now(UTC)
+
+    async def update_workflow_projection(
+        self,
+        task: TaskRecord,
+        *,
+        expected_version: int,
+        fencing_generation: int,
+    ) -> bool:
+        async with self.sessions() as session, session.begin():
+            row = await session.get(GenerationTaskRow, task.id, with_for_update=True)
+            if (
+                row is None
+                or row.status != "RUNNING"
+                or row.version != expected_version
+                or row.workflow_fencing_generation != fencing_generation
+            ):
+                return False
+            _apply_record(row, task)
+            return True
+
+    async def mark_failed_if_workflow_current(self, task_id: UUID, fencing_generation: int) -> bool:
+        async with self.sessions() as session, session.begin():
+            row = await session.get(GenerationTaskRow, task_id, with_for_update=True)
+            if (
+                row is None
+                or row.status != "RUNNING"
+                or row.workflow_fencing_generation != fencing_generation
+            ):
+                return False
+            row.status = "FAILED_RETRYABLE"
+            row.version += 1
+            row.updated_at = datetime.now(UTC)
+            return True
 
     async def delete(self, task_id: UUID) -> None:
         async with self.sessions() as session, session.begin():

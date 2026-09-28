@@ -3,16 +3,30 @@ from uuid import UUID
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from slideai.core.errors import DomainError
 from slideai.domain.evaluation.models import Revision
-from slideai.infrastructure.db.models import RevisionRow
+from slideai.infrastructure.db.models import GenerationTaskRow, RevisionRow
 
 
 class SqlRevisionRepository:
-    def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
+    def __init__(
+        self, sessions: async_sessionmaker[AsyncSession], *, fencing_generation: int | None = None
+    ) -> None:
         self.sessions = sessions
+        self.fencing_generation = fencing_generation
 
     async def add(self, revision: Revision) -> None:
         async with self.sessions() as session, session.begin():
+            if self.fencing_generation is not None:
+                task = await session.get(GenerationTaskRow, revision.task_id, with_for_update=True)
+                if task is None:
+                    raise DomainError("TASK_NOT_FOUND", "Task was not found.")
+                if task.status != "RUNNING":
+                    raise DomainError("TASK_CONFLICT", "A revision requires a running task.")
+                if task.workflow_fencing_generation != self.fencing_generation:
+                    raise DomainError(
+                        "WORKFLOW_LOCK_LOST", "The workflow worker lost its task lock."
+                    )
             session.add(
                 RevisionRow(
                     id=revision.id,

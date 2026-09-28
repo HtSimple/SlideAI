@@ -42,10 +42,14 @@ class MemoryFileRepository:
             return None
         return source_file
 
-    async def list(self, task_id: UUID) -> list[SourceFile]:
+    async def list(self, task_id: UUID, *, include_deleted: bool = False) -> list[SourceFile]:
         if task_id != self.task_id:
             return []
-        return [item for item in self.records.values() if item.status != FileStatus.DELETED]
+        return [
+            item
+            for item in self.records.values()
+            if include_deleted or item.status != FileStatus.DELETED
+        ]
 
     async def set_status(
         self,

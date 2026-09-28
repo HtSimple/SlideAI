@@ -14,6 +14,17 @@ export async function startTask(taskId: string): Promise<WorkflowState> {
   return response.data;
 }
 
+export async function cancelWorkflow(
+  taskId: string,
+  expectedVersion: number,
+): Promise<WorkflowState> {
+  const response = await api.post<WorkflowState>(
+    `/api/v1/tasks/${taskId}/cancel`,
+    { expected_version: expectedVersion },
+  );
+  return response.data;
+}
+
 export async function getRequirement(
   taskId: string,
 ): Promise<RequirementResponse> {

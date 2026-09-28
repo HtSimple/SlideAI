@@ -168,7 +168,7 @@ def create_app(
     app.state.slide_content_service = SlideContentService(task_repository, slide_repository)
     app.state.file_repository = file_repository
     app.state.file_processor = file_processor
-    app.state.file_service = FileService(
+    file_service = FileService(
         file_repository,
         file_storage,
         CeleryFileQueue(),
@@ -179,16 +179,26 @@ def create_app(
         ),
         cleanup=file_processor,
     )
-    app.state.task_service = TaskService(task_repository, model_catalog=model_catalog)
+    app.state.file_service = file_service
+    app.state.task_service = TaskService(
+        task_repository,
+        model_catalog=model_catalog,
+        before_delete=file_service.cleanup_task_files,
+    )
     workflow_queue = CeleryWorkflowQueue()
     app.state.workflow_queue = workflow_queue
     app.state.workflow_control_service = WorkflowControlService(
         task_repository,
         app.state.file_service,
         workflow_queue,
+        outbox_writer=task_repository,
     )
-    app.state.requirement_service = RequirementService(task_repository, workflow_queue)
-    app.state.outline_service = OutlineService(task_repository, workflow_queue)
+    app.state.requirement_service = RequirementService(
+        task_repository, workflow_queue, outbox_writer=task_repository
+    )
+    app.state.outline_service = OutlineService(
+        task_repository, workflow_queue, outbox_writer=task_repository
+    )
     app.state.model_catalog = model_catalog
     app.state.model_gateway = model_gateway
     app.state.chat_service = ChatService(
@@ -200,7 +210,7 @@ def create_app(
         model_gateway,
         mutation_repository=chat_repository,
     )
-    app.state.task_lock = TaskLock(redis_client)
+    app.state.task_lock = TaskLock(redis_client, ttl_seconds=configured.workflow_lock_ttl_seconds)
 
     app.add_middleware(
         CORSMiddleware,

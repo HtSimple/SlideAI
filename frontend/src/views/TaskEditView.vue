@@ -352,7 +352,7 @@ async function refreshFiles(): Promise<void> {
     >
       正在加载任务…
     </div>
-    <form v-else class="editor-grid" @submit.prevent="saveTask">
+    <form v-else class="editor-grid" novalidate @submit.prevent="saveTask">
       <section class="form-surface" aria-label="演示文稿需求">
         <div class="section-heading">
           <span class="section-number">01</span>
