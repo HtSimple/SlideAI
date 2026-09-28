@@ -10,6 +10,12 @@ export default [
   {
     files: ["**/*.vue"],
     languageOptions: {
+      globals: {
+        DragEvent: "readonly",
+        Event: "readonly",
+        File: "readonly",
+        HTMLInputElement: "readonly",
+      },
       parserOptions: {
         parser: typescript.parser,
       },

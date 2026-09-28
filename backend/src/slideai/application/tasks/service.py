@@ -77,8 +77,8 @@ class TaskService:
         self, task_id: UUID, *, expected_version: int, changes: dict[str, object]
     ) -> TaskRecord:
         task = await self.get(task_id)
-        if task.status != TaskStatus.DRAFT:
-            raise DomainError("TASK_CONFLICT", "Only draft tasks can be edited.")
+        if task.status not in {TaskStatus.DRAFT, TaskStatus.READY}:
+            raise DomainError("TASK_CONFLICT", "Only draft or ready tasks can be edited.")
         if task.version != expected_version:
             raise DomainError(
                 "VERSION_CONFLICT",
@@ -110,8 +110,8 @@ class TaskService:
 
     async def delete(self, task_id: UUID, *, expected_version: int | None = None) -> None:
         task = await self.get(task_id)
-        if task.status != TaskStatus.DRAFT:
-            raise DomainError("TASK_CONFLICT", "Only draft tasks can be deleted.")
+        if task.status not in {TaskStatus.DRAFT, TaskStatus.READY}:
+            raise DomainError("TASK_CONFLICT", "Only draft or ready tasks can be deleted.")
         if expected_version is not None and task.version != expected_version:
             raise DomainError(
                 "VERSION_CONFLICT",

@@ -25,7 +25,7 @@
 ## 数据与业务规则
 
 - GenerationTask 是聚合根；业务表包含任务、文件、片段、修订、评估、聊天/消息、模型调用、变更请求和 outbox。文件以随机 UUID 保存；不得以原文件名构造存储路径。
-- 任务、文件、片段、对话、页面与模型调用查询均带 task_id。Chroma 单集合 `slideai_chunks`，检索必须带等值 task_id 元数据过滤。
+- 任务、文件、片段、对话、页面与模型调用查询均带 task_id。每种 Embedding 维度与版本组合使用一个 Chroma 集合（`slideai_chunks_d{dimensions}_{version}`）；检索必须带等值 task_id 元数据过滤。
 - 任务/大纲/内容使用整数版本；一次任务同一时刻只允许一个工作流。Celery 投递使用 transactional outbox 和幂等键。
 - 文件只接受 PDF、DOCX、Markdown、TXT；20 MiB/文件、10 个/任务、提取文本 2,000,000 字符/文件。扫描版 PDF 不做 OCR，报告 `NO_EXTRACTABLE_TEXT`。
 - 文本分块默认 800 token、重叠 120；按标题/段落/句号切分，每页检索 top 6；引用只允许来自当前检索结果。

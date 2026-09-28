@@ -60,6 +60,7 @@ const counts = computed(() => {
 const statusLabel: Record<TaskStatus, string> = {
   DRAFT: "草稿",
   FILES_PROCESSING: "资料处理中",
+  READY: "已就绪",
   WAITING_REQUIREMENT_INPUT: "等待需求确认",
   WAITING_OUTLINE_CONFIRMATION: "等待大纲确认",
   RUNNING: "进行中",
@@ -81,7 +82,7 @@ function filterByStatus(filter: string): void {
 }
 
 function resolveAction(task: TaskRecord): string {
-  if (task.status === "DRAFT") return "继续编辑";
+  if (task.status === "DRAFT" || task.status === "READY") return "继续编辑";
   if (task.status === "COMPLETED") return "查看结果";
   if (task.status === "FAILED_RETRYABLE") return "重试";
   if (task.status.startsWith("WAITING_")) return "继续处理";

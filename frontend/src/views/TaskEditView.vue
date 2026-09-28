@@ -1,12 +1,22 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
-import { useQuery } from "@tanstack/vue-query";
+import { useQuery, useQueryClient } from "@tanstack/vue-query";
 import { RouterLink, useRoute, useRouter } from "vue-router";
+import {
+  getFileLimits,
+  getTaskFiles,
+  removeTaskFile,
+  retryTaskFile,
+  uploadTaskFile,
+} from "../api/files";
+import { apiErrorMessage } from "../api/client";
 import { createTask, getModels, getTask, patchTask } from "../api/tasks";
+import type { SourceFile, SourceFileStatus } from "../types/files";
 import type { CreateTaskInput, TaskRecord } from "../types/tasks";
 
 const route = useRoute();
 const router = useRouter();
+const queryClient = useQueryClient();
 const taskId = computed(() =>
   typeof route.params.taskId === "string" ? route.params.taskId : undefined,
 );
@@ -19,6 +29,20 @@ const taskQuery = useQuery({
   queryKey: computed(() => ["task", taskId.value]),
   queryFn: () => getTask(taskId.value!),
   enabled: computed(() => Boolean(taskId.value)),
+  refetchInterval: (query) =>
+    query.state.data?.status === "FILES_PROCESSING" ? 2000 : false,
+});
+const fileLimitsQuery = useQuery({
+  queryKey: ["file-limits"],
+  queryFn: getFileLimits,
+  staleTime: 60000,
+});
+const filesQuery = useQuery({
+  queryKey: computed(() => ["task-files", taskId.value]),
+  queryFn: () => getTaskFiles(taskId.value!),
+  enabled: computed(() => Boolean(taskId.value)),
+  refetchInterval: (query) =>
+    query.state.data?.some((file) => isProcessing(file.status)) ? 2000 : false,
 });
 const topic = ref("");
 const pageCount = ref(12);
@@ -31,13 +55,38 @@ const modelKey = ref("");
 const saving = ref(false);
 const pageError = ref("");
 const fieldError = ref("");
+const uploadError = ref("");
+const uploadingName = ref("");
+const isDragging = ref(false);
+const fileInput = ref<HTMLInputElement>();
+let loadedTaskId = "";
 const availableModels = computed(() => modelQuery.data.value ?? []);
 const isEdit = computed(() => Boolean(taskId.value));
+const sourceFiles = computed(() => filesQuery.data.value ?? []);
+const fileLimits = computed(
+  () =>
+    fileLimitsQuery.data.value ?? {
+      max_file_size_bytes: 20 * 1024 * 1024,
+      max_files_per_task: 10,
+      allowed_extensions: ["pdf", "docx", "md", "txt"],
+    },
+);
+const allowedExtensions = computed(() =>
+  fileLimits.value.allowed_extensions
+    .map((extension) => `.${extension}`)
+    .join(","),
+);
+const remainingFileSlots = computed(() =>
+  Math.max(0, fileLimits.value.max_files_per_task - sourceFiles.value.length),
+);
 
 watch(
   () => taskQuery.data.value,
   (task) => {
-    if (task) fillForm(task);
+    if (task && loadedTaskId !== task.id) {
+      fillForm(task);
+      loadedTaskId = task.id;
+    }
   },
   { immediate: true },
 );
@@ -111,15 +160,129 @@ async function saveTask(): Promise<void> {
     const input = buildInput();
     if (taskId.value && taskQuery.data.value) {
       await patchTask(taskId.value, taskQuery.data.value.version, input);
+      await router.push("/tasks");
     } else {
-      await createTask(input);
+      const created = await createTask(input);
+      await router.push(`/tasks/${created.id}/edit`);
     }
-    await router.push("/tasks");
   } catch {
     pageError.value = "草稿保存失败，请检查服务状态后重试。";
   } finally {
     saving.value = false;
   }
+}
+
+function isProcessing(status: SourceFileStatus): boolean {
+  return ["UPLOADED", "PARSING", "CHUNKING", "EMBEDDING"].includes(status);
+}
+
+function fileStatusLabel(status: SourceFileStatus): string {
+  const labels: Record<SourceFileStatus, string> = {
+    UPLOADED: "等待处理",
+    PARSING: "解析中",
+    CHUNKING: "切分中",
+    EMBEDDING: "向量化中",
+    READY: "已就绪",
+    FAILED: "处理失败",
+    DELETED: "已移除",
+  };
+  return labels[status];
+}
+
+function formatFileSize(size: number): string {
+  if (size < 1024 * 1024) return `${Math.max(1, Math.round(size / 1024))} KiB`;
+  return `${(size / (1024 * 1024)).toFixed(1)} MiB`;
+}
+
+function openFilePicker(): void {
+  fileInput.value?.click();
+}
+
+async function onFilePickerChange(event: Event): Promise<void> {
+  const input = event.target as HTMLInputElement;
+  await uploadFiles(Array.from(input.files ?? []));
+  input.value = "";
+}
+
+async function onDrop(event: DragEvent): Promise<void> {
+  isDragging.value = false;
+  await uploadFiles(Array.from(event.dataTransfer?.files ?? []));
+}
+
+async function uploadFiles(files: File[]): Promise<void> {
+  uploadError.value = "";
+  if (!taskId.value) {
+    uploadError.value = "请先保存草稿，再添加参考资料。";
+    return;
+  }
+  if (!files.length) return;
+
+  let accepted = 0;
+  for (const file of files) {
+    if (accepted >= remainingFileSlots.value) {
+      uploadError.value = `每个任务最多添加 ${fileLimits.value.max_files_per_task} 个文件。`;
+      break;
+    }
+    const extension = file.name.split(".").pop()?.toLowerCase() ?? "";
+    if (!fileLimits.value.allowed_extensions.includes(extension)) {
+      uploadError.value = `不支持 ${file.name}，请上传 PDF、DOCX、Markdown 或 TXT。`;
+      continue;
+    }
+    if (file.size > fileLimits.value.max_file_size_bytes) {
+      uploadError.value = `${file.name} 超过单文件大小限制（${formatFileSize(fileLimits.value.max_file_size_bytes)}）。`;
+      continue;
+    }
+
+    uploadingName.value = file.name;
+    try {
+      await uploadTaskFile(taskId.value, file);
+      accepted += 1;
+      await refreshFiles();
+    } catch (error) {
+      uploadError.value = apiErrorMessage(
+        error,
+        `${file.name} 上传失败，请重试。`,
+      );
+    } finally {
+      uploadingName.value = "";
+    }
+  }
+}
+
+async function retryFile(file: SourceFile): Promise<void> {
+  if (!taskId.value) return;
+  uploadError.value = "";
+  try {
+    await retryTaskFile(taskId.value, file.id);
+    await refreshFiles();
+  } catch (error) {
+    uploadError.value = apiErrorMessage(
+      error,
+      `${file.original_name} 重试失败。`,
+    );
+  }
+}
+
+async function removeFile(file: SourceFile): Promise<void> {
+  if (!taskId.value) return;
+  uploadError.value = "";
+  try {
+    await removeTaskFile(taskId.value, file.id);
+    await refreshFiles();
+  } catch (error) {
+    uploadError.value = apiErrorMessage(
+      error,
+      `${file.original_name} 移除失败。`,
+    );
+  }
+}
+
+async function refreshFiles(): Promise<void> {
+  if (!taskId.value) return;
+  await Promise.all([
+    queryClient.invalidateQueries({ queryKey: ["task-files", taskId.value] }),
+    queryClient.invalidateQueries({ queryKey: ["task", taskId.value] }),
+  ]);
 }
 </script>
 
@@ -274,23 +437,141 @@ async function saveTask(): Promise<void> {
         </section>
 
         <section
-          class="form-surface source-placeholder"
+          class="form-surface source-panel"
           aria-labelledby="source-title"
         >
           <div class="section-heading">
             <span class="section-number section-number--muted">03</span>
             <div>
               <h2 id="source-title">参考资料</h2>
-              <p>支持 PDF、DOCX、Markdown 和 TXT。</p>
+              <p>上传的资料会用于检索，并保留可追溯的来源位置。</p>
             </div>
           </div>
-          <div class="upload-placeholder">
-            <span aria-hidden="true">↑</span><strong>资料上传即将开放</strong
-            ><small>下一阶段将加入资料解析与引用能力。</small>
+          <div v-if="!taskId" class="upload-gate" role="status">
+            保存草稿后即可添加参考资料。
           </div>
-          <small class="limit-note"
-            >单文件最多 20 MiB · 每个任务最多 10 个文件</small
-          >
+          <template v-else>
+            <div
+              class="upload-drop"
+              :class="{ 'upload-drop--active': isDragging }"
+              @dragenter.prevent="isDragging = true"
+              @dragover.prevent="isDragging = true"
+              @dragleave.prevent="isDragging = false"
+              @drop.prevent="onDrop"
+            >
+              <strong>拖拽文件到此处，或选择本地文件</strong>
+              <small
+                >支持
+                {{
+                  fileLimits.allowed_extensions
+                    .map((item) => item.toUpperCase())
+                    .join("、")
+                }}</small
+              >
+              <button
+                class="button button--secondary upload-button"
+                type="button"
+                :disabled="remainingFileSlots === 0 || Boolean(uploadingName)"
+                @click="openFilePicker"
+              >
+                选择文件
+              </button>
+              <input
+                id="source-file-input"
+                ref="fileInput"
+                class="visually-hidden"
+                type="file"
+                :accept="allowedExtensions"
+                multiple
+                :disabled="remainingFileSlots === 0 || Boolean(uploadingName)"
+                @change="onFilePickerChange"
+              />
+            </div>
+            <small class="limit-note">
+              单文件最多 {{ formatFileSize(fileLimits.max_file_size_bytes) }} ·
+              最多 {{ fileLimits.max_files_per_task }} 个文件 · 还可添加
+              {{ remainingFileSlots }} 个
+            </small>
+            <p v-if="uploadingName" class="uploading-note" role="status">
+              正在上传：{{ uploadingName }}
+            </p>
+            <div v-if="uploadError" class="page-alert" role="alert">
+              {{ uploadError }}
+            </div>
+            <div
+              v-if="filesQuery.isError.value"
+              class="page-alert"
+              role="alert"
+            >
+              无法加载参考资料列表，请稍后重试。
+            </div>
+            <div
+              v-else-if="filesQuery.isPending.value"
+              class="file-list-loading"
+              role="status"
+            >
+              正在读取资料列表…
+            </div>
+            <ul
+              v-else-if="sourceFiles.length"
+              class="source-file-list"
+              aria-label="参考资料列表"
+            >
+              <li
+                v-for="file in sourceFiles"
+                :key="file.id"
+                class="source-file-row"
+              >
+                <span class="file-extension" aria-hidden="true">{{
+                  file.extension.toUpperCase()
+                }}</span>
+                <div class="source-file-info">
+                  <strong :title="file.original_name">{{
+                    file.original_name
+                  }}</strong>
+                  <small
+                    >{{ formatFileSize(file.size_bytes) }} ·
+                    {{ file.chunk_count }} 个资料片段</small
+                  >
+                  <small
+                    v-if="file.status === 'FAILED'"
+                    class="file-error-text"
+                  >
+                    {{ file.error_message || "处理失败，可重试或移除该文件。" }}
+                  </small>
+                </div>
+                <span
+                  class="file-status"
+                  :class="`file-status--${file.status.toLowerCase()}`"
+                >
+                  {{ fileStatusLabel(file.status) }}
+                </span>
+                <div class="file-actions">
+                  <button
+                    v-if="file.status === 'FAILED'"
+                    class="text-button"
+                    type="button"
+                    :disabled="Boolean(uploadingName)"
+                    @click="retryFile(file)"
+                  >
+                    重试
+                  </button>
+                  <button
+                    class="text-button text-button--danger"
+                    type="button"
+                    :disabled="Boolean(uploadingName)"
+                    :aria-label="`移除 ${file.original_name}`"
+                    @click="removeFile(file)"
+                  >
+                    移除
+                  </button>
+                </div>
+              </li>
+            </ul>
+            <p v-else class="empty-files">
+              暂未添加资料；也可以不上传资料继续编写需求。
+            </p>
+          </template>
         </section>
       </aside>
       <footer class="form-actions">
@@ -534,43 +815,145 @@ h1 {
 .model-unavailable {
   color: #667085;
 }
-.source-placeholder {
+.source-panel {
   min-height: 220px;
 }
-.upload-placeholder {
+.upload-drop,
+.upload-gate {
   display: flex;
-  min-height: 114px;
+  min-height: 130px;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  border: 1px dashed #cbd5e1;
-  border-radius: 12px;
-  background: #fbfcfe;
+  gap: 9px;
+  padding: 16px;
+  border: 1px dashed var(--color-border-strong);
+  border-radius: var(--radius-panel);
+  background: var(--color-surface-muted);
   text-align: center;
 }
-.upload-placeholder > span {
-  display: grid;
-  width: 28px;
-  height: 28px;
-  place-items: center;
-  border-radius: 8px;
-  background: #eef4ff;
-  color: var(--color-primary-700);
-  font-size: 19px;
+.upload-drop--active {
+  border-color: var(--color-primary-600);
+  background: var(--color-primary-050);
 }
-.upload-placeholder strong {
+.upload-drop strong {
   color: var(--color-text-strong);
-  font-size: 12px;
+  font-size: 13px;
 }
-.upload-placeholder small,
+.upload-drop small,
 .limit-note {
   color: var(--color-text-muted);
   font-size: 11px;
 }
+.upload-button {
+  min-height: 35px;
+  padding-inline: 13px;
+}
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  clip-path: inset(50%);
+}
 .limit-note {
   display: block;
   margin-top: 11px;
+}
+.uploading-note,
+.file-list-loading,
+.empty-files {
+  margin: 13px 0 0;
+  color: var(--color-text-muted);
+  font-size: 12px;
+}
+.source-file-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 14px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.source-file-row {
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr) max-content max-content;
+  align-items: center;
+  gap: 10px;
+  padding: 11px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-card);
+}
+.file-extension {
+  display: grid;
+  min-height: 32px;
+  place-items: center;
+  border-radius: var(--radius-control);
+  background: var(--color-primary-050);
+  color: var(--color-primary-700);
+  font-size: 9px;
+  font-weight: 700;
+}
+.source-file-info {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 4px;
+}
+.source-file-info strong {
+  overflow: hidden;
+  color: var(--color-text-strong);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.source-file-info small {
+  color: var(--color-text-muted);
+  font-size: 10px;
+}
+.source-file-info .file-error-text {
+  color: var(--color-danger);
+  line-height: 1.5;
+  white-space: normal;
+}
+.file-status {
+  padding: 4px 7px;
+  border-radius: 999px;
+  background: var(--color-info-bg);
+  color: var(--color-primary-700);
+  font-size: 10px;
+  white-space: nowrap;
+}
+.file-status--ready {
+  background: var(--color-success-bg);
+  color: var(--color-success);
+}
+.file-status--failed {
+  background: var(--color-danger-bg);
+  color: var(--color-danger);
+}
+.file-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.text-button {
+  padding: 4px;
+  border: 0;
+  background: transparent;
+  color: var(--color-primary-700);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.text-button--danger {
+  color: var(--color-danger);
+}
+.text-button:disabled {
+  opacity: 0.55;
+  cursor: wait;
 }
 .form-actions {
   grid-column: 1/-1;
@@ -631,6 +1014,9 @@ h1 {
     display: grid;
     grid-template-columns: 1fr 1fr;
   }
+  .source-panel {
+    grid-column: 1 / -1;
+  }
   .form-actions {
     grid-column: 1;
   }
@@ -645,6 +1031,17 @@ h1 {
   }
   .side-column {
     display: flex;
+  }
+  .source-file-row {
+    grid-template-columns: 34px minmax(0, 1fr) max-content;
+  }
+  .file-status {
+    grid-column: 2;
+    justify-self: start;
+  }
+  .file-actions {
+    grid-column: 3;
+    grid-row: 1 / span 2;
   }
   .form-actions {
     position: sticky;

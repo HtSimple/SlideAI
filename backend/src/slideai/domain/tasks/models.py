@@ -11,6 +11,7 @@ from slideai.domain.tasks.complexity import TaskComplexity, score_complexity
 class TaskStatus(StrEnum):
     DRAFT = "DRAFT"
     FILES_PROCESSING = "FILES_PROCESSING"
+    READY = "READY"
     WAITING_REQUIREMENT_INPUT = "WAITING_REQUIREMENT_INPUT"
     WAITING_OUTLINE_CONFIRMATION = "WAITING_OUTLINE_CONFIRMATION"
     RUNNING = "RUNNING"

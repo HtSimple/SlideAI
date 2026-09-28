@@ -2,6 +2,7 @@ export type ComplexityTier = "fast" | "balanced" | "advanced";
 export type TaskStatus =
   | "DRAFT"
   | "FILES_PROCESSING"
+  | "READY"
   | "WAITING_REQUIREMENT_INPUT"
   | "WAITING_OUTLINE_CONFIRMATION"
   | "RUNNING"
