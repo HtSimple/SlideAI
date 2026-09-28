@@ -11,14 +11,20 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from redis.asyncio import Redis
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncEngine
+from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
 
 from slideai.api.health import ReadinessProbe
 from slideai.api.health import router as health_router
+from slideai.api.v1.tasks import router as tasks_router
+from slideai.application.models.gateway import ModelGateway, OpenAICompatibleProvider
+from slideai.application.tasks.service import TaskService
 from slideai.core.config import Settings, get_settings
 from slideai.core.errors import DomainError
 from slideai.core.logging import configure_logging, request_id_context
+from slideai.domain.models.catalog import ModelCatalog
 from slideai.infrastructure.db.session import create_engine
+from slideai.infrastructure.db.task_repository import SqlTaskRepository
+from slideai.infrastructure.redis.task_lock import TaskLock
 
 logger = logging.getLogger("slideai.api")
 _REQUEST_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
@@ -70,6 +76,9 @@ def create_app(
     redis_client = Redis.from_url(  # pyright: ignore[reportUnknownMemberType]
         configured.redis_url, decode_responses=True
     )
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    task_repository = SqlTaskRepository(session_factory)
+    model_catalog = ModelCatalog.from_yaml(configured.model_catalog_path)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncGenerator[None, None]:
@@ -85,6 +94,16 @@ def create_app(
     )
     app.state.readiness_probe = readiness_probe or (lambda: _dependency_probe(engine, redis_client))
     app.state.settings = configured
+    app.state.task_repository = task_repository
+    app.state.task_service = TaskService(task_repository, model_catalog=model_catalog)
+    app.state.model_catalog = model_catalog
+    app.state.model_gateway = ModelGateway(
+        model_catalog=model_catalog,
+        providers={"openai_compatible": OpenAICompatibleProvider()},
+        audit_writer=task_repository.record_model_call,
+        retries=configured.model_retry_count,
+    )
+    app.state.task_lock = TaskLock(redis_client)
 
     app.add_middleware(
         CORSMiddleware,
@@ -162,6 +181,7 @@ def create_app(
         )
 
     app.include_router(health_router)
+    app.include_router(tasks_router)
     return app
 
 

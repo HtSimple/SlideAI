@@ -2,7 +2,7 @@ import { defineConfig } from '@playwright/test'
 
 export default defineConfig({
   testDir: './tests',
-  fullyParallel: true,
+  fullyParallel: false,
   reporter: 'list',
   use: {
     baseURL: process.env.BASE_URL ?? 'http://frontend:4173',

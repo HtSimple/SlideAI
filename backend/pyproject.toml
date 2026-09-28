@@ -10,6 +10,7 @@ dependencies = [
   "fastapi>=0.116,<1",
   "httpx>=0.28,<1",
   "pydantic-settings>=2.10,<3",
+  "PyYAML>=6.0.2,<7",
   "redis>=6,<7",
   "sqlalchemy[asyncio]>=2.0.43,<3",
   "uvicorn[standard]>=0.35,<1",
@@ -17,7 +18,7 @@ dependencies = [
 
 [dependency-groups]
 dev = [
-  "pyright>=1.1.404,<2",
+  "pyright[nodejs]>=1.1.404,<2",
   "pytest>=8.4,<9",
   "pytest-asyncio>=1.1,<2",
   "ruff>=0.13,<1",

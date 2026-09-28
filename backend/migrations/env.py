@@ -7,6 +7,7 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from slideai.core.config import get_settings
+from slideai.infrastructure.db import models  # noqa: F401
 from slideai.infrastructure.db.base import Base
 
 config = context.config

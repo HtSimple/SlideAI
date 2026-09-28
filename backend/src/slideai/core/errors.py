@@ -7,6 +7,9 @@ _HTTP_STATUS_BY_CODE = {
     "VERSION_CONFLICT": 409,
     "TASK_CONFLICT": 409,
     "VALIDATION_ERROR": 422,
+    "MODEL_AUTHENTICATION_ERROR": 502,
+    "MODEL_PROVIDER_ERROR": 502,
+    "MODEL_NOT_AVAILABLE": 422,
 }
 
 
@@ -25,3 +28,23 @@ class DomainError(Exception):
     @property
     def http_status(self) -> int:
         return self._resolved_status_code
+
+
+class ModelTransientError(Exception):
+    def __init__(self, message: str, *, error_type: str = "transient") -> None:
+        super().__init__(message)
+        self.error_type = error_type
+
+
+class ModelAuthenticationError(Exception):
+    pass
+
+
+class ModelPermanentError(Exception):
+    def __init__(self, message: str, *, error_type: str = "provider_error") -> None:
+        super().__init__(message)
+        self.error_type = error_type
+
+
+class ModelOutputValidationError(Exception):
+    pass

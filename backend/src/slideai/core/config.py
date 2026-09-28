@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     max_auto_revisions: int = Field(default=2, ge=0, le=10)
     evaluation_pass_score: int = Field(default=85, ge=0, le=100)
     max_file_size_bytes: int = Field(default=20 * 1024 * 1024, gt=0)
+    model_retry_count: int = Field(default=2, ge=0, le=5)
 
     @property
     def cors_origin_list(self) -> list[str]:
