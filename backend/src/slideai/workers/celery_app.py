@@ -16,7 +16,7 @@ celery_app = Celery(
     "slideai",
     broker=settings.redis_url,
     backend=settings.redis_url,
-    include=["slideai.workers.file_tasks"],
+    include=["slideai.workers.file_tasks", "slideai.workers.workflow_tasks"],
 )
 celery_app.conf.update(  # pyright: ignore[reportUnknownMemberType]
     accept_content=["json"],

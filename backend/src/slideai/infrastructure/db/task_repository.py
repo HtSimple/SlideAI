@@ -125,6 +125,12 @@ def _to_row(task: TaskRecord) -> GenerationTaskRow:
         raw_requirement=task.raw_requirement.model_dump(mode="json"),
         model_preference=task.model_preference.model_dump(mode="json"),
         complexity=task.complexity.model_dump(mode="json"),
+        structured_requirement=(
+            task.structured_requirement.model_dump(mode="json")
+            if task.structured_requirement is not None
+            else None
+        ),
+        outline=task.outline.model_dump(mode="json") if task.outline is not None else None,
         version=task.version,
         created_at=task.created_at,
         updated_at=task.updated_at,
@@ -138,6 +144,12 @@ def _apply_record(row: GenerationTaskRow, task: TaskRecord) -> None:
     row.raw_requirement = task.raw_requirement.model_dump(mode="json")
     row.model_preference = task.model_preference.model_dump(mode="json")
     row.complexity = task.complexity.model_dump(mode="json")
+    row.structured_requirement = (
+        task.structured_requirement.model_dump(mode="json")
+        if task.structured_requirement is not None
+        else None
+    )
+    row.outline = task.outline.model_dump(mode="json") if task.outline is not None else None
     row.version = task.version
     row.updated_at = task.updated_at
 
@@ -152,6 +164,8 @@ def _to_record(row: GenerationTaskRow) -> TaskRecord:
             "raw_requirement": row.raw_requirement,
             "model_preference": row.model_preference,
             "complexity": row.complexity,
+            "structured_requirement": row.structured_requirement,
+            "outline": row.outline,
             "version": row.version,
             "created_at": row.created_at,
             "updated_at": row.updated_at,

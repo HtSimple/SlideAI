@@ -28,6 +28,8 @@ class TaskResponse(BaseModel):
     raw_requirement: RawRequirement
     model_preference: ModelPreference
     complexity: dict[str, Any]
+    structured_requirement: dict[str, Any] | None
+    outline: dict[str, Any] | None
     version: int
     created_at: str
     updated_at: str
@@ -128,6 +130,12 @@ def _task_response(task: TaskRecord) -> TaskResponse:
         raw_requirement=task.raw_requirement,
         model_preference=task.model_preference,
         complexity=task.complexity.model_dump(mode="json"),
+        structured_requirement=(
+            task.structured_requirement.model_dump(mode="json")
+            if task.structured_requirement is not None
+            else None
+        ),
+        outline=task.outline.model_dump(mode="json") if task.outline is not None else None,
         version=task.version,
         created_at=task.created_at.isoformat(),
         updated_at=task.updated_at.isoformat(),

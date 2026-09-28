@@ -10,6 +10,7 @@ import {
   uploadTaskFile,
 } from "../api/files";
 import { apiErrorMessage } from "../api/client";
+import { startTask } from "../api/workflows";
 import { createTask, getModels, getTask, patchTask } from "../api/tasks";
 import type { SourceFile, SourceFileStatus } from "../types/files";
 import type { CreateTaskInput, TaskRecord } from "../types/tasks";
@@ -53,6 +54,7 @@ const constraints = ref("");
 const preferenceMode = ref<"auto" | "manual">("auto");
 const modelKey = ref("");
 const saving = ref(false);
+const starting = ref(false);
 const pageError = ref("");
 const fieldError = ref("");
 const uploadError = ref("");
@@ -78,6 +80,9 @@ const allowedExtensions = computed(() =>
 );
 const remainingFileSlots = computed(() =>
   Math.max(0, fileLimits.value.max_files_per_task - sourceFiles.value.length),
+);
+const canStart = computed(() =>
+  ["DRAFT", "READY"].includes(taskQuery.data.value?.status ?? ""),
 );
 
 watch(
@@ -169,6 +174,30 @@ async function saveTask(): Promise<void> {
     pageError.value = "草稿保存失败，请检查服务状态后重试。";
   } finally {
     saving.value = false;
+  }
+}
+
+async function beginWorkflow(): Promise<void> {
+  pageError.value = "";
+  if (!validate() || !taskId.value || !taskQuery.data.value) return;
+  starting.value = true;
+  try {
+    const saved = await patchTask(
+      taskId.value,
+      taskQuery.data.value.version,
+      buildInput(),
+    );
+    await startTask(taskId.value);
+    await queryClient.invalidateQueries({ queryKey: ["task", taskId.value] });
+    await queryClient.invalidateQueries({ queryKey: ["tasks"] });
+    await router.push(`/tasks/${saved.id}/requirement`);
+  } catch (error) {
+    pageError.value = apiErrorMessage(
+      error,
+      "无法启动需求解析，请检查资料状态后重试。",
+    );
+  } finally {
+    starting.value = false;
   }
 }
 
@@ -577,13 +606,25 @@ async function refreshFiles(): Promise<void> {
       <footer class="form-actions">
         <RouterLink class="button button--secondary" to="/tasks"
           >取消</RouterLink
-        ><button
-          class="button button--primary"
-          type="submit"
-          :disabled="saving"
         >
-          {{ saving ? "正在保存…" : "保存草稿" }}
-        </button>
+        <div class="form-actions__buttons">
+          <button
+            class="button button--secondary"
+            type="submit"
+            :disabled="saving || starting"
+          >
+            {{ saving ? "正在保存…" : "保存草稿" }}
+          </button>
+          <button
+            v-if="isEdit && canStart"
+            class="button button--primary"
+            type="button"
+            :disabled="saving || starting"
+            @click="beginWorkflow"
+          >
+            {{ starting ? "正在解析…" : "解析需求" }}
+          </button>
+        </div>
       </footer>
     </form>
   </section>
@@ -958,9 +999,14 @@ h1 {
 .form-actions {
   grid-column: 1/-1;
   display: flex;
+  align-items: center;
   justify-content: flex-end;
   gap: 10px;
   padding: 16px 2px;
+}
+.form-actions__buttons {
+  display: flex;
+  gap: 10px;
 }
 .button {
   display: inline-flex;
@@ -1052,6 +1098,12 @@ h1 {
     background: var(--color-page-bg);
   }
   .form-actions > * {
+    flex: 1;
+  }
+  .form-actions__buttons {
+    flex-direction: column;
+  }
+  .form-actions__buttons > * {
     flex: 1;
   }
 }

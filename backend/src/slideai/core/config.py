@@ -39,6 +39,10 @@ class Settings(BaseSettings):
         return f"slideai_chunks_d{self.embedding_dimensions}_{self.embedding_version}"
 
     @property
+    def checkpoint_database_url(self) -> str:
+        return self.database_url.replace("postgresql+asyncpg://", "postgresql://", 1)
+
+    @property
     def cors_origin_list(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
 

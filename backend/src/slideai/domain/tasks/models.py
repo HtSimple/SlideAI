@@ -5,6 +5,7 @@ from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from slideai.domain.requirements.models import Outline, StructuredRequirement
 from slideai.domain.tasks.complexity import TaskComplexity, score_complexity
 
 
@@ -43,6 +44,7 @@ class RawRequirement(BaseModel):
     style: str = Field(default="", max_length=200)
     special_constraints: list[str] = Field(default_factory=list)
     estimated_reference_tokens: int = Field(default=0, ge=0)
+    original_text: str | None = Field(default=None, max_length=4000)
 
 
 class CreateTaskCommand(BaseModel):
@@ -60,6 +62,8 @@ class TaskRecord(BaseModel):
     raw_requirement: RawRequirement
     model_preference: ModelPreference
     complexity: TaskComplexity
+    structured_requirement: StructuredRequirement | None = None
+    outline: Outline | None = None
     version: int = 1
     created_at: datetime
     updated_at: datetime

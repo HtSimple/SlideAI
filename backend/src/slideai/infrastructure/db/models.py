@@ -32,6 +32,8 @@ class GenerationTaskRow(Base):
     raw_requirement: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     model_preference: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     complexity: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    structured_requirement: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    outline: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()

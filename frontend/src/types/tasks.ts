@@ -25,6 +25,7 @@ export interface RawRequirement {
   style?: string;
   special_constraints?: string[];
   estimated_reference_tokens?: number;
+  original_text?: string | null;
 }
 
 export interface TaskRecord {
@@ -39,6 +40,8 @@ export interface TaskRecord {
     total_score: number;
     factors: Record<string, number>;
   };
+  structured_requirement?: import("./workflow").StructuredRequirement | null;
+  outline?: import("./workflow").Outline | null;
   version: number;
   created_at: string;
   updated_at: string;
