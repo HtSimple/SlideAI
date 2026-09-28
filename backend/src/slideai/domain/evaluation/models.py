@@ -5,6 +5,7 @@ from uuid import UUID, uuid4
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from slideai.domain.content.models import SlideContent
+from slideai.domain.requirements.models import Outline
 
 DimensionName = Literal["completeness", "logic", "content_quality", "requirement_alignment"]
 
@@ -102,6 +103,9 @@ class Revision(BaseModel):
     reason: str = Field(min_length=1, max_length=2000)
     before_slides: list[SlideContent]
     after_slides: list[SlideContent]
+    before_outline: Outline | None = None
+    after_outline: Outline | None = None
+    can_undo: bool = False
     score_before: int | None = Field(default=None, ge=0, le=100)
     score_after: int | None = Field(default=None, ge=0, le=100)
     created_at: datetime

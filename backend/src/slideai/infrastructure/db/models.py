@@ -3,6 +3,7 @@ from typing import Any
 from uuid import UUID
 
 from sqlalchemy import (
+    Boolean,
     CheckConstraint,
     DateTime,
     ForeignKey,
@@ -195,8 +196,91 @@ class RevisionRow(Base):
     reason: Mapped[str] = mapped_column(Text, nullable=False)
     before_slides: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False)
     after_slides: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False)
+    before_outline: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    after_outline: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     score_before: Mapped[int | None] = mapped_column(Integer)
     score_after: Mapped[int | None] = mapped_column(Integer)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+
+
+class ChatConversationRow(Base):
+    __tablename__ = "chat_conversations"
+    __table_args__ = (
+        UniqueConstraint("task_id", name="uq_chat_conversations_task"),
+        UniqueConstraint("task_id", "id", name="uq_chat_conversations_task_id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
+    task_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("generation_tasks.id", ondelete="CASCADE"), index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class ChatMessageRow(Base):
+    __tablename__ = "chat_messages"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["task_id", "conversation_id"],
+            ["chat_conversations.task_id", "chat_conversations.id"],
+            ondelete="CASCADE",
+        ),
+        UniqueConstraint("task_id", "id", name="uq_chat_messages_task_id"),
+        Index("ix_chat_messages_task_created", "task_id", "created_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
+    task_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("generation_tasks.id", ondelete="CASCADE"), index=True
+    )
+    conversation_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
+    role: Mapped[str] = mapped_column(String(24), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    target: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    change_request: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    revision_id: Mapped[UUID | None] = mapped_column(PGUUID(as_uuid=True))
+    can_undo: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class ChangeRequestRow(Base):
+    __tablename__ = "change_requests"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["task_id", "source_message_id"],
+            ["chat_messages.task_id", "chat_messages.id"],
+            ondelete="CASCADE",
+        ),
+        Index("ix_change_requests_task_status", "task_id", "status"),
+    )
+
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
+    task_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("generation_tasks.id", ondelete="CASCADE"), index=True
+    )
+    source_message_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
+    target_type: Mapped[str] = mapped_column(String(24), nullable=False)
+    target_ids: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    affected_pages: Mapped[list[int]] = mapped_column(JSONB, nullable=False, default=list)
+    operation: Mapped[str] = mapped_column(String(24), nullable=False)
+    instruction: Mapped[str] = mapped_column(Text, nullable=False)
+    replacement_text: Mapped[str | None] = mapped_column(String(1000))
+    impact_scope: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    risk_level: Mapped[str] = mapped_column(String(24), nullable=False)
+    needs_clarification: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    clarification_question: Mapped[str | None] = mapped_column(String(500))
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    expected_task_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

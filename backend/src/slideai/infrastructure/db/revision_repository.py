@@ -23,6 +23,16 @@ class SqlRevisionRepository:
                     reason=revision.reason,
                     before_slides=[item.model_dump(mode="json") for item in revision.before_slides],
                     after_slides=[item.model_dump(mode="json") for item in revision.after_slides],
+                    before_outline=(
+                        revision.before_outline.model_dump(mode="json")
+                        if revision.before_outline is not None
+                        else None
+                    ),
+                    after_outline=(
+                        revision.after_outline.model_dump(mode="json")
+                        if revision.after_outline is not None
+                        else None
+                    ),
                     score_before=revision.score_before,
                     score_after=revision.score_after,
                     created_at=revision.created_at,
@@ -49,6 +59,8 @@ class SqlRevisionRepository:
                         "reason": row.reason,
                         "before_slides": row.before_slides,
                         "after_slides": row.after_slides,
+                        "before_outline": row.before_outline,
+                        "after_outline": row.after_outline,
                         "score_before": row.score_before,
                         "score_after": row.score_after,
                         "created_at": row.created_at,

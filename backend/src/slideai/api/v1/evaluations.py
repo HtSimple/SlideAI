@@ -64,7 +64,16 @@ async def list_revisions(
 ) -> RevisionListResponse:
     await tasks.get(task_id)
     revisions = await request.app.state.revision_repository.list_for_task(task_id)
-    return RevisionListResponse(task_id=task_id, items=revisions)
+    latest_id = None
+    if revisions and revisions[-1].revision_type in {"CHAT", "USER"}:
+        latest_id = revisions[-1].id
+    return RevisionListResponse(
+        task_id=task_id,
+        items=[
+            revision.model_copy(update={"can_undo": revision.id == latest_id})
+            for revision in revisions
+        ],
+    )
 
 
 @router.post(

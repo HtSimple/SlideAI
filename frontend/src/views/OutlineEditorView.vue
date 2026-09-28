@@ -1,16 +1,19 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
-import { useQuery } from "@tanstack/vue-query";
+import { useQuery, useQueryClient } from "@tanstack/vue-query";
 import { RouterLink, useRoute, useRouter } from "vue-router";
 import { getTask } from "../api/tasks";
 import { confirmOutline, getOutline, updateOutline } from "../api/workflows";
 import { apiErrorMessage } from "../api/client";
 import { resolveTaskRoute } from "../domain/task-routing";
+import ChatAssistantDrawer from "../components/chat/ChatAssistantDrawer.vue";
+import type { ChatTarget } from "../types/chat";
 import type { Outline, OutlineSection } from "../types/workflow";
 
 const route = useRoute();
 const router = useRouter();
 const taskId = String(route.params.taskId);
+const queryClient = useQueryClient();
 const taskQuery = useQuery({
   queryKey: ["task", taskId],
   queryFn: () => getTask(taskId),
@@ -25,6 +28,8 @@ const outline = ref<Outline>();
 const savedOutline = ref("");
 const saving = ref(false);
 const errorMessage = ref("");
+const chatOpen = ref(false);
+const chatTarget = ref<ChatTarget | null>(null);
 const task = computed(() => taskQuery.data.value);
 const targetPageCount = computed(
   () =>
@@ -65,6 +70,27 @@ function cloneOutline(value: Outline): Outline {
 
 function createId(): string {
   return `outline-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+}
+
+function openChat(target: ChatTarget | null = null): void {
+  chatTarget.value = target;
+  chatOpen.value = true;
+}
+
+function itemOrdinal(sectionIndex: number, itemIndex: number): number {
+  return (
+    (outline.value?.sections
+      .slice(0, sectionIndex)
+      .reduce((count, section) => count + section.items.length, 0) ?? 0) +
+    itemIndex +
+    1
+  );
+}
+
+function refreshAfterChatChange(): void {
+  for (const key of ["task", "outline", "slides", "revisions", "evaluation"]) {
+    void queryClient.invalidateQueries({ queryKey: [key, taskId] });
+  }
 }
 
 watch(
@@ -199,7 +225,16 @@ async function confirm(): Promise<void> {
           调整章节、条目和页数分配；总页数必须与需求一致。
         </p>
       </div>
-      <span v-if="task" class="version-note">版本 {{ task.version }}</span>
+      <div class="page-heading__tools">
+        <span v-if="task" class="version-note">版本 {{ task.version }}</span>
+        <button
+          class="button button--secondary"
+          type="button"
+          @click="openChat()"
+        >
+          打开聊天助手
+        </button>
+      </div>
     </header>
 
     <div class="workflow-steps" aria-label="工作流进度">
@@ -374,6 +409,19 @@ async function confirm(): Promise<void> {
               />
             </label>
             <button
+              class="text-button item-chat"
+              type="button"
+              @click="
+                openChat({
+                  target_type: 'outline_item',
+                  target_id: item.id,
+                  label: `第 ${itemOrdinal(index, itemIndex)} 点 · ${item.title}`,
+                })
+              "
+            >
+              让助手修改
+            </button>
+            <button
               class="text-button text-button--danger item-remove"
               type="button"
               :disabled="section.items.length <= 1"
@@ -425,6 +473,15 @@ async function confirm(): Promise<void> {
     <div v-else class="page-alert" role="alert">
       尚无可审核的大纲，请返回需求页继续处理。
     </div>
+    <ChatAssistantDrawer
+      v-if="task"
+      :task-id="taskId"
+      :task-version="task.version"
+      :open="chatOpen"
+      :target="chatTarget"
+      @close="chatOpen = false"
+      @updated="refreshAfterChatChange"
+    />
   </main>
 </template>
 
@@ -463,6 +520,25 @@ h1 {
 .version-note {
   color: var(--color-text-muted);
   font-size: 0.9rem;
+}
+.page-heading__tools {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.button {
+  display: inline-flex;
+  min-height: 40px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 13px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-control);
+  background: white;
+  color: var(--color-text-strong);
+  font: inherit;
+  font-weight: 650;
+  cursor: pointer;
 }
 .workflow-steps {
   display: flex;
@@ -613,7 +689,7 @@ h1 {
 }
 .item-row {
   display: grid;
-  grid-template-columns: 1.1fr 1.4fr 90px auto;
+  grid-template-columns: 1.1fr 1.4fr 90px auto auto;
   align-items: end;
   gap: 10px;
 }
@@ -722,6 +798,10 @@ h1 {
   .page-heading {
     align-items: flex-start;
   }
+  .page-heading__tools {
+    align-items: flex-end;
+    flex-direction: column;
+  }
   .form-surface {
     padding: 16px;
   }
@@ -741,6 +821,9 @@ h1 {
     width: auto;
   }
   .item-remove {
+    justify-self: start;
+  }
+  .item-chat {
     justify-self: start;
   }
   .form-actions,

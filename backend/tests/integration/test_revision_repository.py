@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 from slideai.core.config import get_settings
 from slideai.domain.content.models import SlideContent
 from slideai.domain.evaluation.models import Revision
+from slideai.domain.requirements.models import Outline
 from slideai.domain.tasks.models import RawRequirement, TaskRecord, initial_complexity
 from slideai.infrastructure.db.revision_repository import SqlRevisionRepository
 from slideai.infrastructure.db.session import create_engine
@@ -47,6 +48,8 @@ async def test_revision_snapshots_round_trip_and_remain_task_scoped() -> None:
         reason="明确页面结论",
         before_slides=[slide],
         after_slides=[after],
+        before_outline=_outline(),
+        after_outline=_outline(),
         score_before=80,
         created_at=datetime.now(UTC),
     )
@@ -73,4 +76,26 @@ def _task() -> TaskRecord:
         complexity=initial_complexity(requirement),
         created_at=now,
         updated_at=now,
+    )
+
+
+def _outline() -> Outline:
+    return Outline(
+        title="市场趋势",
+        sections=[
+            {
+                "id": "market",
+                "title": "市场分析",
+                "objective": "识别变化",
+                "page_count": 3,
+                "items": [
+                    {
+                        "id": "signals",
+                        "title": "市场信号",
+                        "objective": "说明趋势",
+                        "page_count": 3,
+                    }
+                ],
+            }
+        ],
     )

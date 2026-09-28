@@ -1,17 +1,22 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
-import { useQuery } from "@tanstack/vue-query";
+import { useQuery, useQueryClient } from "@tanstack/vue-query";
 import { RouterLink, useRoute, useRouter } from "vue-router";
 import { apiErrorMessage } from "../api/client";
 import { downloadMarkdown, getMarkdown, getSlides } from "../api/content";
 import { getTask } from "../api/tasks";
+import { getRevisions } from "../api/evaluation";
+import { undoChatRevision } from "../api/chat";
+import ChatAssistantDrawer from "../components/chat/ChatAssistantDrawer.vue";
 import EvaluationPanel from "../components/result/EvaluationPanel.vue";
 import { resolveTaskRoute } from "../domain/task-routing";
 import type { SlideContent } from "../types/content";
+import type { ChatTarget } from "../types/chat";
 
 type ResultTab = "content" | "evaluation" | "markdown" | "history";
 const route = useRoute();
 const router = useRouter();
+const queryClient = useQueryClient();
 const taskId = String(route.params.taskId);
 const taskQuery = useQuery({
   queryKey: ["task", taskId],
@@ -39,6 +44,12 @@ const tab = computed<ResultTab>(() => {
     ? (value as ResultTab)
     : "content";
 });
+const revisionsQuery = useQuery({
+  queryKey: ["revisions", taskId],
+  queryFn: () => getRevisions(taskId),
+  enabled: computed(() => tab.value === "history"),
+});
+const chatOpen = ref(false);
 const pageParam = computed(() =>
   Array.isArray(route.query.page) ? route.query.page[0] : route.query.page,
 );
@@ -48,6 +59,15 @@ const selectedSlide = computed<SlideContent | undefined>(
     slides.value.find(
       (slide) => slide.page_number === selectedPageNumber.value,
     ) ?? slides.value[0],
+);
+const chatTarget = computed<ChatTarget | null>(() =>
+  selectedSlide.value
+    ? {
+        target_type: "slide",
+        target_id: selectedSlide.value.id,
+        label: `第 ${selectedSlide.value.page_number} 页`,
+      }
+    : null,
 );
 const sections = computed(() => {
   const grouped = new Map<string, SlideContent[]>();
@@ -97,6 +117,45 @@ function selectPage(pageNumber: number): void {
   void router.replace({
     query: { ...route.query, page: String(pageNumber) },
   });
+}
+
+function refreshAfterChatChange(): void {
+  for (const key of ["task", "slides", "markdown", "evaluation", "revisions"]) {
+    void queryClient.invalidateQueries({ queryKey: [key, taskId] });
+  }
+}
+
+function revisionTypeLabel(type: string): string {
+  return (
+    {
+      AUTO: "自动修订",
+      USER: "用户修改",
+      CHAT: "聊天修改",
+      UNDO: "撤销修改",
+    }[type] ?? "内容修改"
+  );
+}
+
+function revisionScopeLabel(scope: string[]): string {
+  if (!scope.length) return "整份内容";
+  const pages = scope
+    .map((id) => slides.value.find((slide) => slide.id === id)?.page_number)
+    .filter((value): value is number => value !== undefined);
+  if (pages.length === scope.length) {
+    return `第 ${pages.join("、")} 页`;
+  }
+  return scope.join("、");
+}
+
+async function undoRevision(revisionId: string): Promise<void> {
+  if (!task.value) return;
+  actionMessage.value = "";
+  try {
+    await undoChatRevision(taskId, revisionId, task.value.version);
+    refreshAfterChatChange();
+  } catch (error) {
+    actionMessage.value = apiErrorMessage(error, "撤销失败，请刷新后重试。");
+  }
 }
 
 async function copyMarkdown(): Promise<void> {
@@ -151,6 +210,13 @@ function citationLocation(citation: SlideContent["citations"][number]): string {
         <RouterLink class="button button--secondary" to="/tasks"
           >返回任务中心</RouterLink
         >
+        <button
+          class="button button--secondary"
+          type="button"
+          @click="chatOpen = true"
+        >
+          聊天助手
+        </button>
         <button
           class="button button--secondary"
           type="button"
@@ -316,7 +382,13 @@ function citationLocation(citation: SlideContent["citations"][number]): string {
           当前对象：第 {{ selectedSlide.page_number }} 页
         </p>
         <p v-else>当前对象：整份内容</p>
-        <p>局部修改和对话记录将在聊天修改阶段接入。</p>
+        <button
+          class="button button--secondary"
+          type="button"
+          @click="chatOpen = true"
+        >
+          打开聊天助手
+        </button>
       </aside>
     </section>
 
@@ -360,12 +432,64 @@ function citationLocation(citation: SlideContent["citations"][number]): string {
     </section>
 
     <EvaluationPanel v-else-if="tab === 'evaluation'" :task-id="taskId" />
-    <section v-else class="not-ready-panel">
-      <h2>修改历史</h2>
-      <p>
-        当前版本 {{ task?.version }} 已保存；局部修改历史将在聊天修改阶段接入。
+    <section v-else class="revision-history" aria-labelledby="history-title">
+      <h2 id="history-title">修改历史</h2>
+      <p v-if="revisionsQuery.isPending.value" role="status">
+        正在读取修改历史…
       </p>
+      <p v-else-if="!revisionsQuery.data.value?.items.length">
+        还没有修改记录。
+      </p>
+      <ol v-else class="revision-list">
+        <li
+          v-for="revision in [...revisionsQuery.data.value.items].reverse()"
+          :key="revision.id"
+          class="revision-row"
+        >
+          <div class="revision-row__heading">
+            <strong>版本 {{ revision.revision_number }}</strong>
+            <span>{{ revisionTypeLabel(revision.revision_type) }}</span>
+          </div>
+          <p>{{ revision.reason }}</p>
+          <div class="revision-row__meta">
+            <span>范围：{{ revisionScopeLabel(revision.scope) }}</span>
+            <span>
+              {{
+                revision.score_before === null
+                  ? "未评估"
+                  : `${revision.score_before} 分`
+              }}
+              →
+              {{
+                revision.score_after === null
+                  ? "未评估"
+                  : `${revision.score_after} 分`
+              }}
+            </span>
+            <time :datetime="revision.created_at">{{
+              revision.created_at
+            }}</time>
+          </div>
+          <button
+            v-if="revision.can_undo"
+            class="button button--secondary"
+            type="button"
+            @click="undoRevision(revision.id)"
+          >
+            撤销修改
+          </button>
+        </li>
+      </ol>
     </section>
+    <ChatAssistantDrawer
+      v-if="task"
+      :task-id="taskId"
+      :task-version="task.version"
+      :open="chatOpen"
+      :target="chatTarget"
+      @close="chatOpen = false"
+      @updated="refreshAfterChatChange"
+    />
   </main>
 </template>
 
@@ -604,6 +728,53 @@ function citationLocation(citation: SlideContent["citations"][number]): string {
   color: var(--color-text-muted);
   line-height: 1.6;
 }
+.revision-history {
+  display: grid;
+  gap: 12px;
+  margin-top: 18px;
+  padding: 22px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-panel);
+  background: var(--color-surface);
+}
+.revision-history h2,
+.revision-history p {
+  margin: 0;
+}
+.revision-history h2 {
+  color: var(--color-text-strong);
+}
+.revision-list {
+  display: grid;
+  gap: 0;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+.revision-row {
+  display: grid;
+  gap: 8px;
+  padding: 15px 0;
+  border-top: 1px solid var(--color-border);
+}
+.revision-row__heading,
+.revision-row__meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 18px;
+}
+.revision-row__heading strong {
+  color: var(--color-text-strong);
+}
+.revision-row__meta {
+  color: var(--color-text-muted);
+  font-size: 12px;
+}
+.revision-row .button {
+  justify-self: start;
+}
 .markdown-panel,
 .not-ready-panel,
 .result-loading {
@@ -712,7 +883,7 @@ function citationLocation(citation: SlideContent["citations"][number]): string {
     order: 2;
   }
   .markdown-panel,
-  .not-ready-panel {
+  .revision-history {
     padding: 16px;
   }
 }

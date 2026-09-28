@@ -47,9 +47,12 @@ export interface Revision {
   reason: string;
   before_slides: import("./content").SlideContent[];
   after_slides: import("./content").SlideContent[];
+  before_outline?: import("./workflow").Outline | null;
+  after_outline?: import("./workflow").Outline | null;
   score_before: number | null;
   score_after: number | null;
   created_at: string;
+  can_undo: boolean;
 }
 
 export interface RevisionListResponse {

@@ -5,6 +5,7 @@ from typing import Any, cast
 from pydantic import BaseModel
 
 from slideai.core.errors import ModelPermanentError
+from slideai.domain.changes.models import ChangeIntent
 from slideai.domain.content.models import SlideBatch
 from slideai.domain.evaluation.models import EvaluationDraft, SlideRefinementDraft
 from slideai.domain.models.catalog import ModelDefinition
@@ -58,6 +59,95 @@ class DeterministicDemoProvider:
                     ],
                     "issues": issues,
                     "suggestions": ["检查结论与页面目标是否一致。"],
+                }
+            )
+        if output_schema is ChangeIntent:
+            user_message = str(payload.get("user_message", ""))
+            selected_value = payload.get("selected_target")
+            selected: dict[str, Any] | None = None
+            if isinstance(selected_value, dict):
+                selected = cast(dict[str, Any], selected_value)
+            outline = cast(dict[str, Any], payload.get("outline") or {})
+            slides = cast(list[dict[str, Any]], payload.get("slides") or [])
+            target_type = "slide"
+            target_ids: list[str] = []
+            if selected is not None and selected.get("target_type"):
+                target_type = str(selected["target_type"])
+                if selected.get("target_id"):
+                    target_ids = [str(selected["target_id"])]
+            elif any(token in user_message for token in ("整份", "全部页面", "全部内容")):
+                target_type = "whole_deck"
+            else:
+                digits = {
+                    "一": 1,
+                    "二": 2,
+                    "三": 3,
+                    "四": 4,
+                    "五": 5,
+                    "六": 6,
+                    "七": 7,
+                    "八": 8,
+                    "九": 9,
+                    "十": 10,
+                }
+                sections = cast(list[dict[str, Any]], outline.get("sections", []))
+                flattened: list[dict[str, Any]] = [
+                    item
+                    for section in sections
+                    for item in cast(list[dict[str, Any]], section.get("items", []))
+                ]
+                point_number = next(
+                    (
+                        number
+                        for label, number in digits.items()
+                        if f"第{label}点" in user_message or f"第 {label} 点" in user_message
+                    ),
+                    None,
+                )
+                page_number = next(
+                    (
+                        number
+                        for label, number in digits.items()
+                        if f"第{label}页" in user_message or f"第 {label} 页" in user_message
+                    ),
+                    None,
+                )
+                if point_number and point_number <= len(flattened):
+                    target_type = "outline_item"
+                    target_ids = [str(flattened[point_number - 1]["id"])]
+                elif page_number:
+                    selected_slide = next(
+                        (slide for slide in slides if slide.get("page_number") == page_number),
+                        None,
+                    )
+                    if selected_slide:
+                        target_type = "slide"
+                        target_ids = [str(selected_slide["id"])]
+            replacement = None
+            for marker in ("改成", "改为", "替换为", "调整为", "改成：", "改为："):
+                if marker in user_message:
+                    replacement = user_message.split(marker, 1)[1].strip(" ：:，,。")
+                    if replacement:
+                        break
+            needs_clarification = target_type != "whole_deck" and not target_ids
+            if target_type == "outline_item" and not replacement:
+                needs_clarification = True
+            return ChangeIntent.model_validate(
+                {
+                    "target_type": target_type,
+                    "target_ids": target_ids,
+                    "operation": "replace" if replacement else "rewrite",
+                    "instruction": user_message,
+                    "replacement_text": replacement,
+                    "risk_level": "local",
+                    "needs_clarification": needs_clarification,
+                    "clarification_question": (
+                        "你希望修改哪一章、条目或页面？"
+                        if needs_clarification and not target_ids
+                        else "请提供希望替换成的条目标题或内容。"
+                        if needs_clarification
+                        else None
+                    ),
                 }
             )
         if output_schema is SlideRefinementDraft:

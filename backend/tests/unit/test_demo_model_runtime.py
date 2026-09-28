@@ -5,6 +5,7 @@ import pytest
 
 from slideai.application.models.factory import create_model_runtime
 from slideai.core.config import Settings
+from slideai.domain.changes.models import ChangeIntent
 from slideai.domain.content.models import SlideBatch
 from slideai.domain.requirements.models import Outline, StructuredRequirement
 from slideai.domain.tasks.complexity import ComplexityTier, TaskComplexity
@@ -104,3 +105,91 @@ def test_model_runtime_uses_the_fake_catalog_only_when_explicitly_selected() -> 
 
     assert all(model.provider == "fake" for model in fake_catalog.models.values())
     assert all(model.provider == "openai_compatible" for model in openai_catalog.models.values())
+
+
+@pytest.mark.asyncio
+async def test_fake_change_parser_resolves_fourth_outline_item_and_replacement() -> None:
+    _, gateway = create_model_runtime(Settings(generation_provider="fake", _env_file=None))
+    task_id = uuid4()
+    complexity = TaskComplexity(tier=ComplexityTier.FAST, total_score=1, factors={})
+    outline = {
+        "title": "方案",
+        "sections": [
+            {
+                "id": "section",
+                "title": "分析",
+                "objective": "分析问题",
+                "page_count": 4,
+                "items": [
+                    {
+                        "id": f"item-{number}",
+                        "title": f"第{number}点",
+                        "objective": "说明要点",
+                        "page_count": 1,
+                    }
+                    for number in range(1, 5)
+                ],
+            }
+        ],
+    }
+
+    result = await gateway.invoke_structured(
+        task_id=task_id,
+        node="parse_change",
+        messages=[
+            {
+                "role": "user",
+                "content": json.dumps(
+                    {
+                        "user_message": "把第四点改成具体项目分析",
+                        "selected_target": None,
+                        "outline": outline,
+                        "slides": [],
+                    },
+                    ensure_ascii=False,
+                ),
+            }
+        ],
+        output_schema=ChangeIntent,
+        preference=ModelPreference(),
+        complexity=complexity,
+        idempotency_key=f"{task_id}:change-parser",
+    )
+
+    assert result.output.target_type == "outline_item"
+    assert result.output.target_ids == ["item-4"]
+    assert result.output.replacement_text == "具体项目分析"
+    assert result.output.needs_clarification is False
+
+
+@pytest.mark.asyncio
+async def test_fake_change_parser_requests_clarification_when_target_is_missing() -> None:
+    _, gateway = create_model_runtime(Settings(generation_provider="fake", _env_file=None))
+    task_id = uuid4()
+    complexity = TaskComplexity(tier=ComplexityTier.FAST, total_score=1, factors={})
+
+    result = await gateway.invoke_structured(
+        task_id=task_id,
+        node="parse_change",
+        messages=[
+            {
+                "role": "user",
+                "content": json.dumps(
+                    {
+                        "user_message": "改得更有说服力",
+                        "selected_target": None,
+                        "outline": {"sections": []},
+                        "slides": [],
+                    },
+                    ensure_ascii=False,
+                ),
+            }
+        ],
+        output_schema=ChangeIntent,
+        preference=ModelPreference(),
+        complexity=complexity,
+        idempotency_key=f"{task_id}:change-parser-unclear",
+    )
+
+    assert result.output.needs_clarification is True
+    assert result.output.clarification_question

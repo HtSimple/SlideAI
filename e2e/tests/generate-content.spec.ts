@@ -7,7 +7,7 @@ test("creates a task and completes the Docker fake-provider text workflow", asyn
   const topic = `Compose 演示 ${Date.now()}`;
   await page.goto("/tasks/new");
   await page.getByLabel(/主题/).fill(topic);
-  await page.getByLabel(/目标页数/).fill("3");
+  await page.getByLabel(/目标页数/).fill("4");
   await page.getByLabel(/使用场景/).fill("季度经营汇报");
   await page.getByLabel(/目标受众/).fill("管理团队");
   await page.getByLabel(/内容风格/).fill("简明、结论先行");
@@ -87,10 +87,10 @@ test("creates a task and completes the Docker fake-provider text workflow", asyn
     items: { page_number: number }[];
     generation_progress: { completed_pages: number; total_pages: number };
   };
-  expect(slides.items.map((slide) => slide.page_number)).toEqual([1, 2, 3]);
+  expect(slides.items.map((slide) => slide.page_number)).toEqual([1, 2, 3, 4]);
   expect(slides.generation_progress).toMatchObject({
-    completed_pages: 3,
-    total_pages: 3,
+    completed_pages: 4,
+    total_pages: 4,
   });
 
   const markdownResponse = await page.request.get(
@@ -118,4 +118,40 @@ test("creates a task and completes the Docker fake-provider text workflow", asyn
     "page",
   );
   expect(await page.getByLabel("只读 Markdown 源码").inputValue()).toContain(topic);
+
+  const contentBeforeChat = (await slidesResponse.json()) as {
+    items: { id: string; page_number: number; title: string; bullets: string[] }[];
+  };
+  await page.getByRole("button", { name: "聊天助手", exact: true }).click();
+  await page.getByLabel("输入修改要求").fill("请把第一页的标题改成市场行动建议");
+  await page.getByRole("button", { name: "发送", exact: true }).click();
+  await expect(page.locator('[aria-label="执行结果"]')).toContainText("修改已完成");
+  await expect(page.locator('[aria-label="影响确认"]')).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "撤销修改" })).toBeVisible();
+
+  const changedSlidesResponse = await page.request.get(
+    `${new URL(page.url()).origin}/api/v1/tasks/${taskId}/slides`,
+  );
+  const changedSlides = (await changedSlidesResponse.json()) as typeof contentBeforeChat;
+  expect(changedSlides.items[0]?.bullets).not.toEqual(contentBeforeChat.items[0]?.bullets);
+  expect(changedSlides.items[0]?.bullets.join(" ")).toContain(
+    "请把第一页的标题改成市场行动建议",
+  );
+  expect(changedSlides.items.slice(1)).toEqual(contentBeforeChat.items.slice(1));
+
+  await page.reload();
+  await page.getByRole("button", { name: "聊天助手", exact: true }).click();
+  await expect(page.getByText("请把第一页的标题改成市场行动建议")).toBeVisible();
+  await expect(page.locator('[aria-label="执行结果"]')).toContainText("修改已完成");
+  await page.getByRole("button", { name: "撤销修改" }).click();
+
+  await expect
+    .poll(async () => {
+      const response = await page.request.get(
+        `${new URL(page.url()).origin}/api/v1/tasks/${taskId}/slides`,
+      );
+      if (!response.ok()) return [];
+      return ((await response.json()) as typeof contentBeforeChat).items;
+    })
+    .toEqual(contentBeforeChat.items);
 });
