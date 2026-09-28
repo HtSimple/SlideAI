@@ -44,9 +44,9 @@
 
 - Python 3.12、uv；FastAPI/Pydantic v2、SQLAlchemy async/Alembic、LangGraph 1.x、LangChain 1.x、Celery 5.x；PostgreSQL 16+、Redis、Chroma server。
 - Vue 3、TypeScript strict、Vite、Pinia、TanStack Vue Query、Element Plus、Axios、Vitest、Vue Test Utils、Playwright。
-- Docker Compose 服务为 frontend、api、worker、postgres、redis、chroma。CORS 只允许配置的前端源。
+- Docker Compose 服务为 frontend、api、worker、postgres、redis、chroma，并提供 `test` profile 下的 e2e 容器。所有依赖安装、服务启动、数据库迁移、lint、类型检查、单元/集成/E2E 测试和构建均在容器内执行；宿主机只需 Docker Engine 和 Docker Compose，不依赖宿主机的 Python、Node、数据库或中间件版本。CORS 只允许配置的前端源。
 - 环境变量覆盖本地 `.env`；密钥不入库、不进 API 响应和日志。JSON 日志包含 request/task/run/node IDs、耗时及稳定错误码，不包含完整 prompt、用户文档或密钥。
-- 每阶段质量门槛使用文档列出的 Ruff、Pyright、pytest、ESLint、vue-tsc、Vitest、build；端到端用 Playwright。真实模型 smoke 不作为 CI 必需。
+- 每阶段质量门槛使用 Docker 容器内的 Ruff、Pyright、pytest、ESLint、vue-tsc、Vitest、build；端到端用 Playwright 容器。CI 只依赖 Docker Compose。真实模型 smoke 不作为 CI 必需。
 - 项目文档统一保存在 `docs/`；`docs/README.md` 提供启动、配置、迁移、测试、备份、已知限制和文档入口。
 
 ## 阶段交付门槛
