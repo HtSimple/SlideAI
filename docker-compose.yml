@@ -1,0 +1,137 @@
+name: slideai
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-slideai}
+      POSTGRES_USER: ${POSTGRES_USER:-slideai}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-local_dev_only}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  chroma:
+    image: chromadb/chroma:1.0.20
+    volumes:
+      - chroma_data:/chroma/chroma
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/8000"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  api:
+    build:
+      context: ./backend
+    environment: &app_environment
+      APP_ENV: ${APP_ENV:-development}
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-slideai}:${POSTGRES_PASSWORD:-local_dev_only}@postgres:5432/${POSTGRES_DB:-slideai}
+      REDIS_URL: redis://redis:6379/0
+      CHROMA_HOST: chroma
+      CHROMA_PORT: 8000
+      FILE_STORAGE_ROOT: /var/lib/slideai/files
+      MODEL_CATALOG_PATH: /app/config/models.yaml
+      MAX_AUTO_REVISIONS: ${MAX_AUTO_REVISIONS:-2}
+      EVALUATION_PASS_SCORE: ${EVALUATION_PASS_SCORE:-85}
+      MAX_FILE_SIZE_BYTES: ${MAX_FILE_SIZE_BYTES:-20971520}
+      CORS_ORIGINS: http://localhost:4173
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    volumes:
+      - ./backend:/app
+      - python_environment:/opt/venv
+      - slideai_files:/var/lib/slideai/files
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      chroma:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8000:8000"
+    command: ["uv", "run", "uvicorn", "slideai.api.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=3)"]
+      interval: 5s
+      timeout: 4s
+      retries: 20
+
+  worker:
+    build:
+      context: ./backend
+    environment: *app_environment
+    volumes:
+      - ./backend:/app
+      - python_environment:/opt/venv
+      - slideai_files:/var/lib/slideai/files
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      chroma:
+        condition: service_healthy
+    command: ["uv", "run", "celery", "-A", "slideai.workers.celery_app:celery_app", "worker", "--loglevel=INFO", "--concurrency=${WORKER_CONCURRENCY:-2}", "--hostname=slideai@%h"]
+    healthcheck:
+      test: ["CMD-SHELL", "uv run celery -A slideai.workers.celery_app:celery_app inspect ping --timeout=5 | grep -q pong"]
+      interval: 30s
+      timeout: 8s
+      retries: 5
+      start_period: 15s
+
+  frontend:
+    build:
+      context: ./frontend
+    environment:
+      VITE_API_BASE_URL: ""
+    volumes:
+      - ./frontend:/app
+      - frontend_node_modules:/app/node_modules
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:4173:4173"
+    command: ["pnpm", "dev"]
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4173').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  e2e:
+    profiles: ["test"]
+    build:
+      context: ./e2e
+    volumes:
+      - ./e2e:/app
+      - e2e_node_modules:/app/node_modules
+    depends_on:
+      frontend:
+        condition: service_healthy
+    command: ["pnpm", "test"]
+
+volumes:
+  postgres_data:
+  redis_data:
+  chroma_data:
+  slideai_files:
+  python_environment:
+  frontend_node_modules:
+  e2e_node_modules:
