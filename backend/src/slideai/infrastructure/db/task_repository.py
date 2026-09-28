@@ -149,6 +149,12 @@ def _to_row(task: TaskRecord) -> GenerationTaskRow:
             if task.generation_progress is not None
             else None
         ),
+        evaluation_result=(
+            task.evaluation_result.model_dump(mode="json")
+            if task.evaluation_result is not None
+            else None
+        ),
+        revision_count=task.revision_count,
         version=task.version,
         created_at=task.created_at,
         updated_at=task.updated_at,
@@ -173,6 +179,12 @@ def _apply_record(row: GenerationTaskRow, task: TaskRecord) -> None:
         if task.generation_progress is not None
         else None
     )
+    row.evaluation_result = (
+        task.evaluation_result.model_dump(mode="json")
+        if task.evaluation_result is not None
+        else None
+    )
+    row.revision_count = task.revision_count
     row.version = task.version
     row.updated_at = task.updated_at
 
@@ -190,6 +202,8 @@ def _to_record(row: GenerationTaskRow) -> TaskRecord:
             "structured_requirement": row.structured_requirement,
             "outline": row.outline,
             "generation_progress": row.generation_progress,
+            "evaluation_result": row.evaluation_result,
+            "revision_count": row.revision_count,
             "version": row.version,
             "created_at": row.created_at,
             "updated_at": row.updated_at,

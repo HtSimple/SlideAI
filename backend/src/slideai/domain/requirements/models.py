@@ -12,6 +12,7 @@ class StructuredRequirement(BaseModel):
     audience: str | None = Field(default=None, max_length=500)
     style: str | None = Field(default=None, max_length=200)
     constraints: list[str] = Field(default_factory=list, max_length=20)
+    required_keywords: list[str] = Field(default_factory=list, max_length=50)
     language: str = Field(default="zh-CN", min_length=2, max_length=20)
     source_usage: Literal["required", "preferred", "optional"] = "preferred"
     original_text: str | None = Field(default=None, max_length=4000)

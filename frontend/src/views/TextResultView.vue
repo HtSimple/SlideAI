@@ -5,6 +5,7 @@ import { RouterLink, useRoute, useRouter } from "vue-router";
 import { apiErrorMessage } from "../api/client";
 import { downloadMarkdown, getMarkdown, getSlides } from "../api/content";
 import { getTask } from "../api/tasks";
+import EvaluationPanel from "../components/result/EvaluationPanel.vue";
 import { resolveTaskRoute } from "../domain/task-routing";
 import type { SlideContent } from "../types/content";
 
@@ -358,10 +359,7 @@ function citationLocation(citation: SlideContent["citations"][number]): string {
       <p v-else>还没有可用的 Markdown 内容。</p>
     </section>
 
-    <section v-else-if="tab === 'evaluation'" class="not-ready-panel">
-      <h2>质量评估</h2>
-      <p>正文已生成。质量评分、硬性检查和修订建议将在下一阶段接入。</p>
-    </section>
+    <EvaluationPanel v-else-if="tab === 'evaluation'" :task-id="taskId" />
     <section v-else class="not-ready-panel">
       <h2>修改历史</h2>
       <p>

@@ -77,6 +77,13 @@ class SqlFileRepository:
                 select(GenerationTaskRow.status).where(GenerationTaskRow.id == task_id)
             )
 
+    async def list_chunk_ids(self, task_id: UUID) -> set[UUID]:
+        async with self.sessions() as session:
+            ids = await session.scalars(
+                select(DocumentChunkRow.id).where(DocumentChunkRow.task_id == task_id)
+            )
+            return set(ids.all())
+
     async def get(
         self, task_id: UUID, file_id: UUID, *, include_deleted: bool = False
     ) -> SourceFile | None:

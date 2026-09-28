@@ -4,6 +4,9 @@ import { useQuery } from "@tanstack/vue-query";
 import { RouterLink, useRoute, useRouter } from "vue-router";
 import { getTask } from "../api/tasks";
 import { resolveTaskRoute } from "../domain/task-routing";
+import { apiErrorMessage } from "../api/client";
+import { submitEvaluationDecision } from "../api/evaluation";
+import { getSlides } from "../api/content";
 
 const route = useRoute();
 const router = useRouter();
@@ -20,6 +23,16 @@ const taskQuery = useQuery({
 });
 const task = computed(() => taskQuery.data.value);
 const progress = computed(() => task.value?.generation_progress);
+const evaluation = computed(() => task.value?.evaluation_result);
+const feedback = ref("");
+const selectedScope = ref<string[]>([]);
+const actionBusy = ref(false);
+const actionMessage = ref("");
+const slidesQuery = useQuery({
+  queryKey: ["slides", taskId],
+  queryFn: () => getSlides(taskId),
+  enabled: computed(() => task.value?.status === "WAITING_USER_FEEDBACK"),
+});
 
 const stages = [
   "需求解析",
@@ -73,6 +86,34 @@ watch(
 
 function updateVisibility(): void {
   hidden.value = globalThis.document.visibilityState === "hidden";
+}
+
+async function decideEvaluation(
+  action: "accept" | "refine" | "cancel",
+): Promise<void> {
+  if (!task.value || actionBusy.value) return;
+  if (action === "refine" && !feedback.value.trim()) {
+    actionMessage.value = "请先填写希望改进的内容。";
+    return;
+  }
+  actionBusy.value = true;
+  actionMessage.value = "";
+  try {
+    await submitEvaluationDecision(taskId, {
+      expected_version: task.value.version,
+      action,
+      ...(action === "refine"
+        ? { feedback: feedback.value.trim(), scope: selectedScope.value }
+        : {}),
+    });
+    active.value = true;
+    feedback.value = "";
+    await taskQuery.refetch();
+  } catch (error) {
+    actionMessage.value = apiErrorMessage(error, "提交评估操作失败，请重试。");
+  } finally {
+    actionBusy.value = false;
+  }
 }
 
 onMounted(() => {
@@ -201,7 +242,7 @@ onUnmounted(() => {
           正在准备生成内容，完成的页面会在这里持续显示。
         </p>
         <p v-else-if="task.status === 'WAITING_USER_FEEDBACK'">
-          当前流程需要你补充处理。任务和已完成内容已保存。
+          自动修订已达到上限。当前内容、评估结果和修订记录均已保存。
         </p>
         <p v-else-if="task.status.startsWith('FAILED_')">
           已保存的任务内容仍可查看。可返回任务中心检查并恢复任务。
@@ -217,6 +258,75 @@ onUnmounted(() => {
         <RouterLink class="button button--secondary" to="/tasks"
           >返回任务中心</RouterLink
         >
+        <section
+          v-if="task.status === 'WAITING_USER_FEEDBACK' && evaluation"
+          class="evaluation-decision"
+          aria-labelledby="decision-title"
+        >
+          <h3 id="decision-title">质量评估：{{ evaluation.total_score }} 分</h3>
+          <ul v-if="evaluation.issues.length" class="decision-issues">
+            <li
+              v-for="issue in evaluation.issues"
+              :key="issue.code + issue.description"
+            >
+              <strong>{{ issue.description }}</strong>
+              <span>{{ issue.suggestion }}</span>
+            </li>
+          </ul>
+          <fieldset
+            v-if="slidesQuery.data.value?.items.length"
+            class="scope-picker"
+          >
+            <legend>重新生成范围（可选）</legend>
+            <label
+              v-for="slide in slidesQuery.data.value.items"
+              :key="slide.id"
+            >
+              <input
+                v-model="selectedScope"
+                type="checkbox"
+                :value="slide.id"
+              />
+              第 {{ slide.page_number }} 页：{{ slide.title }}
+            </label>
+          </fieldset>
+          <label class="feedback-field">
+            修改意见
+            <textarea
+              v-model="feedback"
+              rows="3"
+              maxlength="2000"
+              placeholder="描述希望优先改进的内容；留空范围时会按评估问题选择页面。"
+            />
+          </label>
+          <div class="decision-actions">
+            <button
+              class="button button--secondary"
+              type="button"
+              :disabled="actionBusy"
+              @click="decideEvaluation('cancel')"
+            >
+              取消任务
+            </button>
+            <button
+              class="button button--secondary"
+              type="button"
+              :disabled="actionBusy"
+              @click="decideEvaluation('accept')"
+            >
+              接受当前结果
+            </button>
+            <button
+              class="button button--primary"
+              type="button"
+              :disabled="actionBusy"
+              @click="decideEvaluation('refine')"
+            >
+              {{ actionBusy ? "正在提交…" : "提交意见并继续" }}
+            </button>
+          </div>
+          <p v-if="actionMessage" role="alert">{{ actionMessage }}</p>
+        </section>
       </section>
     </div>
   </main>
@@ -414,6 +524,71 @@ onUnmounted(() => {
   gap: 12px;
   border-color: #f3bdc5;
   background: var(--color-danger-bg);
+}
+.evaluation-decision {
+  display: grid;
+  width: 100%;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  background: #fff;
+  text-align: left;
+}
+.evaluation-decision h3 {
+  font-size: 17px;
+}
+.decision-issues,
+.scope-picker {
+  display: grid;
+  gap: 9px;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+.decision-issues li {
+  display: grid;
+  gap: 4px;
+  color: var(--color-text-muted);
+}
+.decision-issues strong {
+  color: var(--color-text-strong);
+}
+.scope-picker {
+  padding: 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+}
+.scope-picker legend {
+  padding: 0 5px;
+  font-weight: 650;
+}
+.scope-picker label,
+.feedback-field {
+  display: grid;
+  gap: 6px;
+  color: var(--color-text-strong);
+  text-align: left;
+}
+.scope-picker label {
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  font-size: 13px;
+}
+.feedback-field textarea {
+  width: 100%;
+  resize: vertical;
+  padding: 10px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 8px;
+  color: var(--color-text-strong);
+  font: inherit;
+}
+.decision-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 9px;
 }
 .button {
   display: inline-flex;

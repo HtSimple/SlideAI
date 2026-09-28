@@ -35,6 +35,8 @@ class GenerationTaskRow(Base):
     structured_requirement: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     outline: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     generation_progress: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    evaluation_result: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    revision_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
@@ -173,5 +175,28 @@ class SlidePageRow(Base):
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
     updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class RevisionRow(Base):
+    __tablename__ = "revisions"
+    __table_args__ = (
+        UniqueConstraint("task_id", "revision_number", name="uq_revisions_task_number"),
+    )
+
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
+    task_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("generation_tasks.id", ondelete="CASCADE"), index=True
+    )
+    revision_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    revision_type: Mapped[str] = mapped_column(String(24), nullable=False)
+    scope: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    before_slides: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False)
+    after_slides: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False)
+    score_before: Mapped[int | None] = mapped_column(Integer)
+    score_after: Mapped[int | None] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

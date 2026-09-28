@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     max_auto_revisions: int = Field(default=2, ge=0, le=10)
     evaluation_pass_score: int = Field(default=85, ge=0, le=100)
+    demo_evaluation_score: int = Field(default=90, ge=0, le=100)
     max_file_size_bytes: int = Field(default=20 * 1024 * 1024, gt=0)
     max_files_per_task: int = Field(default=10, ge=1, le=100)
     max_extracted_chars_per_file: int = Field(default=2_000_000, ge=1)

@@ -3,6 +3,7 @@ import { expect, test } from "@playwright/test";
 test("creates a task and completes the Docker fake-provider text workflow", async ({
   page,
 }) => {
+  test.setTimeout(120_000);
   const topic = `Compose 演示 ${Date.now()}`;
   await page.goto("/tasks/new");
   await page.getByLabel(/主题/).fill(topic);
@@ -21,6 +22,57 @@ test("creates a task and completes the Docker fake-provider text workflow", asyn
   await page.getByRole("button", { name: "确认大纲并开始生成" }).click();
 
   await expect(page).toHaveURL(/\/tasks\/.+\/progress$/);
+  await expect(
+    page.getByRole("button", { name: "接受当前结果" }),
+  ).toBeVisible({ timeout: 90_000 });
+  await expect(page.getByRole("heading", { name: "质量评估：80 分" })).toBeVisible();
+  const waitingTaskId = new URL(page.url()).pathname.split("/")[2];
+  const evaluationResponse = await page.request.get(
+    `${new URL(page.url()).origin}/api/v1/tasks/${waitingTaskId}/evaluation`,
+  );
+  expect(evaluationResponse.ok()).toBeTruthy();
+  expect(await evaluationResponse.json()).toMatchObject({
+    revision_count: 2,
+    evaluation_result: { total_score: 80, passed: false },
+  });
+  const revisionResponse = await page.request.get(
+    `${new URL(page.url()).origin}/api/v1/tasks/${waitingTaskId}/revisions`,
+  );
+  expect(revisionResponse.ok()).toBeTruthy();
+  expect((await revisionResponse.json()).items).toHaveLength(2);
+
+  const userFeedback = "请把第 1 页要点改为面向管理团队的行动建议";
+  await page.getByRole("checkbox", { name: /第 1 页/ }).check();
+  await page.getByLabel("修改意见").fill(userFeedback);
+  await page.getByRole("button", { name: "提交意见并继续" }).click();
+  await expect
+    .poll(
+      async () => {
+        const response = await page.request.get(
+          `${new URL(page.url()).origin}/api/v1/tasks/${waitingTaskId}/revisions`,
+        );
+        if (!response.ok()) return 0;
+        return ((await response.json()) as { items: unknown[] }).items.length;
+      },
+      { timeout: 90_000 },
+    )
+    .toBe(3);
+  await expect(
+    page.getByRole("button", { name: "接受当前结果" }),
+  ).toBeVisible({ timeout: 90_000 });
+  const revisedEvaluation = await page.request.get(
+    `${new URL(page.url()).origin}/api/v1/tasks/${waitingTaskId}/evaluation`,
+  );
+  expect((await revisedEvaluation.json()).revision_count).toBe(2);
+  const revisedHistory = await page.request.get(
+    `${new URL(page.url()).origin}/api/v1/tasks/${waitingTaskId}/revisions`,
+  );
+  const revisions = (await revisedHistory.json()).items;
+  expect(revisions).toHaveLength(3);
+  expect(revisions[2]).toMatchObject({ revision_type: "USER", scope: [expect.any(String)] });
+  expect(revisions[2].after_slides[0].bullets.join(" ")).toContain(userFeedback);
+
+  await page.getByRole("button", { name: "接受当前结果" }).click();
   await expect(page).toHaveURL(/\/tasks\/.+\/result$/, { timeout: 90_000 });
   await expect(
     page.getByRole("heading", { name: topic, exact: true, level: 1 }),
@@ -46,6 +98,10 @@ test("creates a task and completes the Docker fake-provider text workflow", asyn
   );
   expect(markdownResponse.ok()).toBeTruthy();
   expect((await markdownResponse.json()).markdown).toContain(`# ${topic}`);
+
+  await page.getByRole("button", { name: "质量评估" }).click();
+  await expect(page.getByRole("heading", { name: "质量评估" })).toBeVisible();
+  await expect(page.getByText("80 / 100 · 25%", { exact: true })).toHaveCount(4);
 
   await page.getByRole("button", { name: "Markdown 源码" }).click();
   await expect(page).toHaveURL(/tab=markdown/);

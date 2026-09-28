@@ -6,6 +6,7 @@ from pydantic import BaseModel
 
 from slideai.core.errors import ModelPermanentError
 from slideai.domain.content.models import SlideBatch
+from slideai.domain.evaluation.models import EvaluationDraft, SlideRefinementDraft
 from slideai.domain.models.catalog import ModelDefinition
 from slideai.domain.requirements.models import Outline, StructuredRequirement
 
@@ -14,6 +15,9 @@ ModelMessage = dict[str, str]
 
 class DeterministicDemoProvider:
     """Build local, repeatable content when fake generation is explicitly configured."""
+
+    def __init__(self, *, evaluation_score: int = 90) -> None:
+        self.evaluation_score = evaluation_score
 
     async def invoke_structured(
         self,
@@ -25,6 +29,58 @@ class DeterministicDemoProvider:
     ) -> BaseModel:
         del model, idempotency_key
         payload = _latest_json_message(messages)
+        if output_schema is EvaluationDraft:
+            names = [
+                "completeness",
+                "logic",
+                "content_quality",
+                "requirement_alignment",
+            ]
+            score = self.evaluation_score
+            slides = payload.get("slides", [])
+            issues = []
+            if score < 85:
+                scope = [slides[0]["id"]] if slides else []
+                issues = [
+                    {
+                        "code": "DEMO_QUALITY_IMPROVEMENT",
+                        "severity": "medium",
+                        "scope": scope,
+                        "description": "演示评估建议进一步明确页面结论与支撑要点。",
+                        "suggestion": "精炼标题并让要点直接回应页面目标。",
+                    }
+                ]
+            return EvaluationDraft.model_validate(
+                {
+                    "dimensions": [
+                        {"name": name, "score": score, "feedback": "本地确定性演示评分。"}
+                        for name in names
+                    ],
+                    "issues": issues,
+                    "suggestions": ["检查结论与页面目标是否一致。"],
+                }
+            )
+        if output_schema is SlideRefinementDraft:
+            feedback = str(payload.get("feedback", "")).strip().splitlines()[0][:80]
+
+            def refine_demo_slide(slide: dict[str, Any]) -> dict[str, Any]:
+                title = slide["title"]
+                if not title.startswith("已优化："):
+                    title = f"已优化：{title}"
+                bullets = list(slide["bullets"])
+                if feedback:
+                    bullets[-1] = f"结合反馈“{feedback}”：{bullets[-1]}"
+                return {
+                    "id": slide["id"],
+                    "title": title[:200],
+                    "bullets": bullets,
+                    "speaker_notes": slide.get("speaker_notes"),
+                    "verification_notes": slide.get("verification_notes", []),
+                }
+
+            return SlideRefinementDraft.model_validate(
+                {"slides": [refine_demo_slide(slide) for slide in payload.get("slides", [])]}
+            )
         if output_schema is StructuredRequirement:
             raw = payload
             return StructuredRequirement.model_validate(

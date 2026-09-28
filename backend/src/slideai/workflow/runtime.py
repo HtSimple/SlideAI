@@ -1,3 +1,4 @@
+from collections.abc import Awaitable, Callable
 from typing import Any, cast
 from uuid import UUID
 
@@ -5,10 +6,12 @@ from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langgraph.types import Command
 
 from slideai.application.content.writer import PageRetriever, ProgressReporter, SlideRepository
+from slideai.application.evaluation.ports import RevisionRepository
 from slideai.application.models.gateway import ModelGateway
 from slideai.core.config import Settings
 from slideai.core.errors import DomainError
 from slideai.domain.content.models import SlideProgress
+from slideai.domain.evaluation.models import EvaluationResult
 from slideai.domain.requirements.models import Outline, StructuredRequirement
 from slideai.domain.tasks.complexity import TaskComplexity
 from slideai.domain.tasks.models import TaskStatus
@@ -26,6 +29,8 @@ async def execute_persisted_workflow(
     retriever: PageRetriever,
     slide_repository: SlideRepository,
     progress_reporter: ProgressReporter | None = None,
+    revision_repository: RevisionRepository | None = None,
+    chunk_id_loader: Callable[[UUID], Awaitable[set[UUID]]] | None = None,
 ) -> dict[str, Any]:
     task = await repository.get(task_id)
     if task is None:
@@ -41,6 +46,9 @@ async def execute_persisted_workflow(
                 retriever=retriever,
                 slide_repository=slide_repository,
                 progress_reporter=progress_reporter,
+                settings=settings,
+                revision_repository=revision_repository,
+                chunk_id_loader=chunk_id_loader,
             )
             command: Any = (
                 Command(resume=resume) if resume is not None else build_initial_state(task)
@@ -75,6 +83,10 @@ async def _persist_projection(
         update["outline"] = Outline.model_validate(outline_data)
     if complexity_data := result.get("task_complexity"):
         update["complexity"] = TaskComplexity.model_validate(complexity_data)
+    if evaluation_data := result.get("evaluation_result"):
+        update["evaluation_result"] = EvaluationResult.model_validate(evaluation_data)
+    if "revision_count" in result:
+        update["revision_count"] = result["revision_count"]
 
     interrupts = result.get("__interrupt__", ())
     if interrupts:
@@ -85,10 +97,16 @@ async def _persist_projection(
         elif interrupt_kind == "outline":
             update["status"] = TaskStatus.WAITING_OUTLINE_CONFIRMATION
             update["current_stage"] = "outline_review"
+        elif interrupt_kind == "evaluation_limit":
+            update["status"] = TaskStatus.WAITING_USER_FEEDBACK
+            update["current_stage"] = "evaluation_review"
     elif result.get("outline_confirmed"):
         update["status"] = TaskStatus.READY
         update["current_stage"] = "outline_confirmed"
-    if result.get("final_markdown"):
+    if result.get("workflow_cancelled"):
+        update["status"] = TaskStatus.CANCELLED
+        update["current_stage"] = "cancelled"
+    elif result.get("final_markdown") and not interrupts:
         update["status"] = TaskStatus.COMPLETED
         update["current_stage"] = "completed"
         total_batches = task.generation_progress.total_batches if task.generation_progress else 0

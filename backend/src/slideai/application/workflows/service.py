@@ -1,6 +1,6 @@
 from collections.abc import Callable
 from datetime import UTC, datetime
-from typing import Protocol
+from typing import Any, Protocol
 from uuid import UUID
 
 from slideai.application.workflows.ports import WorkflowQueue
@@ -57,6 +57,54 @@ class WorkflowControlService:
         except Exception as error:
             raise DomainError(
                 "WORKFLOW_QUEUE_UNAVAILABLE", "The task could not be queued for processing."
+            ) from error
+        return updated
+
+    async def decide_evaluation(
+        self,
+        task_id: UUID,
+        *,
+        expected_version: int,
+        decision: dict[str, Any],
+    ) -> TaskRecord:
+        task = await self._get(task_id)
+        if task.status != TaskStatus.WAITING_USER_FEEDBACK:
+            raise DomainError(
+                "TASK_CONFLICT", "This task is not waiting for an evaluation decision."
+            )
+        if task.version != expected_version:
+            raise DomainError(
+                "VERSION_CONFLICT",
+                "Task changed since it was loaded.",
+                {"expected_version": expected_version, "actual_version": task.version},
+            )
+        if task.current_stage != "evaluation_review":
+            raise DomainError("TASK_CONFLICT", "The task is waiting for a different user action.")
+
+        updated = task.model_copy(
+            update={
+                "status": TaskStatus.RUNNING,
+                "current_stage": "evaluate",
+                "version": task.version + 1,
+                "updated_at": self.clock(),
+            }
+        )
+        await self.tasks.update(updated, expected_version=task.version)
+        try:
+            self.queue.enqueue_resume(task_id, decision)
+        except Exception as error:
+            latest = await self._get(task_id)
+            restored = latest.model_copy(
+                update={
+                    "status": TaskStatus.WAITING_USER_FEEDBACK,
+                    "current_stage": "evaluation_review",
+                    "version": latest.version + 1,
+                    "updated_at": self.clock(),
+                }
+            )
+            await self.tasks.update(restored, expected_version=latest.version)
+            raise DomainError(
+                "WORKFLOW_QUEUE_UNAVAILABLE", "The evaluation decision could not be queued."
             ) from error
         return updated
 

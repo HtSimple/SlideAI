@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
 
 from slideai.api.health import ReadinessProbe
 from slideai.api.health import router as health_router
+from slideai.api.v1.evaluations import router as evaluations_router
 from slideai.api.v1.files import router as files_router
 from slideai.api.v1.outlines import router as outlines_router
 from slideai.api.v1.requirements import router as requirements_router
@@ -37,6 +38,7 @@ from slideai.core.logging import configure_logging, request_id_context
 from slideai.infrastructure.celery_queue.file_queue import CeleryFileQueue
 from slideai.infrastructure.celery_queue.workflow_queue import CeleryWorkflowQueue
 from slideai.infrastructure.db.file_repository import SqlFileRepository
+from slideai.infrastructure.db.revision_repository import SqlRevisionRepository
 from slideai.infrastructure.db.session import create_engine
 from slideai.infrastructure.db.slide_repository import SqlSlideRepository
 from slideai.infrastructure.db.task_repository import SqlTaskRepository
@@ -111,6 +113,7 @@ def create_app(
     )
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
     task_repository = SqlTaskRepository(session_factory)
+    revision_repository = SqlRevisionRepository(session_factory)
     slide_repository = SqlSlideRepository(session_factory)
     file_repository = SqlFileRepository(session_factory)
     file_storage = LocalFileStorage(configured.file_storage_root)
@@ -153,6 +156,7 @@ def create_app(
     )
     app.state.settings = configured
     app.state.task_repository = task_repository
+    app.state.revision_repository = revision_repository
     app.state.slide_repository = slide_repository
     app.state.slide_content_service = SlideContentService(task_repository, slide_repository)
     app.state.file_repository = file_repository
@@ -263,6 +267,7 @@ def create_app(
     app.include_router(requirements_router)
     app.include_router(outlines_router)
     app.include_router(slides_router)
+    app.include_router(evaluations_router)
     return app
 
 

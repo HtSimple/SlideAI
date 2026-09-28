@@ -18,7 +18,9 @@ def create_model_runtime(
 ) -> tuple[ModelCatalog, ModelGateway]:
     if settings.generation_provider == "fake":
         catalog = ModelCatalog.for_fake_provider()
-        providers: dict[str, StructuredProvider] = {"fake": DeterministicDemoProvider()}
+        providers: dict[str, StructuredProvider] = {
+            "fake": DeterministicDemoProvider(evaluation_score=settings.demo_evaluation_score)
+        }
     else:
         catalog = ModelCatalog.from_yaml(settings.model_catalog_path)
         providers = {"openai_compatible": OpenAICompatibleProvider()}

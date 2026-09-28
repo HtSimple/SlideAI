@@ -43,6 +43,8 @@ export interface TaskRecord {
   structured_requirement?: import("./workflow").StructuredRequirement | null;
   outline?: import("./workflow").Outline | null;
   generation_progress?: import("./content").SlideProgress | null;
+  evaluation_result?: import("./evaluation").EvaluationResult | null;
+  revision_count?: number;
   version: number;
   created_at: string;
   updated_at: string;

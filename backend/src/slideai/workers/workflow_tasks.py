@@ -10,6 +10,7 @@ from slideai.application.files.retrieval import DocumentRetriever
 from slideai.application.models.factory import create_model_runtime
 from slideai.core.config import get_settings
 from slideai.infrastructure.db.file_repository import SqlFileRepository
+from slideai.infrastructure.db.revision_repository import SqlRevisionRepository
 from slideai.infrastructure.db.session import create_engine
 from slideai.infrastructure.db.slide_repository import SqlSlideRepository
 from slideai.infrastructure.db.task_repository import SqlTaskRepository
@@ -45,6 +46,8 @@ async def _run(task_id: UUID, resume: dict[str, Any] | None = None) -> None:
             retriever=retriever,
             slide_repository=SqlSlideRepository(sessions),
             progress_reporter=TaskProgressReporter(repository),
+            revision_repository=SqlRevisionRepository(sessions),
+            chunk_id_loader=file_repository.list_chunk_ids,
         )
     finally:
         await engine.dispose()

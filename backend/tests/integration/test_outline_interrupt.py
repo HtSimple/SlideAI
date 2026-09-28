@@ -132,6 +132,22 @@ def _slide_batches() -> list[dict[str, Any]]:
     ]
 
 
+def _evaluation_draft() -> dict[str, Any]:
+    return {
+        "dimensions": [
+            {"name": name, "score": 90, "weight": 25, "feedback": "Clear and complete."}
+            for name in (
+                "completeness",
+                "logic",
+                "content_quality",
+                "requirement_alignment",
+            )
+        ],
+        "issues": [],
+        "suggestions": [],
+    }
+
+
 class EmptyRetriever:
     async def search(self, task_id: UUID, query: str):
         return []
@@ -171,7 +187,7 @@ async def test_outline_interrupt_resumes_after_worker_restart() -> None:
         await saver.setup()
         slide_repository = MemorySlides()
         graph = build_slide_graph(
-            _gateway(_slide_batches()),
+            _gateway([*_slide_batches(), _evaluation_draft()]),
             checkpointer=saver,
             retriever=EmptyRetriever(),
             slide_repository=slide_repository,
@@ -185,5 +201,6 @@ async def test_outline_interrupt_resumes_after_worker_restart() -> None:
         assert resumed["outline_confirmed"] is True
         assert [slide["page_number"] for slide in resumed["slides_content"]] == list(range(1, 13))
         assert len(slide_repository.slides) == 12
+        assert resumed["evaluation_result"]["passed"] is True
         assert resumed["final_markdown"].startswith("# Industry outlook\n")
         await saver.adelete_thread(str(task.id))

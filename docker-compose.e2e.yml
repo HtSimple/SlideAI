@@ -2,7 +2,9 @@ services:
   api:
     environment:
       GENERATION_PROVIDER: fake
+      DEMO_EVALUATION_SCORE: 80
 
   worker:
     environment:
       GENERATION_PROVIDER: fake
+      DEMO_EVALUATION_SCORE: 80
