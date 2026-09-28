@@ -52,6 +52,35 @@ class ModelCatalog(BaseModel):
     node_policies: dict[str, NodePolicy] = Field(default_factory=dict)
 
     @classmethod
+    def for_fake_provider(cls) -> "ModelCatalog":
+        models = {
+            key: ModelDefinition(
+                key=key,
+                display_name=f"本地演示模型（{tier.value}）",
+                provider="fake",
+                model_id=key,
+                base_url="",
+                api_key_env="",
+                tier=tier,
+                fallbacks=fallbacks,
+            )
+            for key, tier, fallbacks in (
+                ("demo_fast", ComplexityTier.FAST, ["demo_balanced"]),
+                ("demo_balanced", ComplexityTier.BALANCED, ["demo_fast"]),
+                ("demo_advanced", ComplexityTier.ADVANCED, ["demo_balanced"]),
+            )
+        }
+        return cls(
+            models=models,
+            node_policies={
+                "plan_outline": NodePolicy(minimum_tier=ComplexityTier.BALANCED),
+                "write_slides": NodePolicy(minimum_tier=ComplexityTier.BALANCED),
+                "evaluate_quality": NodePolicy(minimum_tier=ComplexityTier.BALANCED),
+                "refine_content": NodePolicy(minimum_tier=ComplexityTier.BALANCED),
+            },
+        )
+
+    @classmethod
     def from_yaml(cls, path: Path) -> "ModelCatalog":
         content = cast(dict[str, Any], yaml.safe_load(path.read_text(encoding="utf-8")) or {})
         raw_models = cast(dict[str, dict[str, Any]], content.get("models", {}))

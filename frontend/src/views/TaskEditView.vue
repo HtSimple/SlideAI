@@ -10,6 +10,7 @@ import {
   uploadTaskFile,
 } from "../api/files";
 import { apiErrorMessage } from "../api/client";
+import { resolveTaskRoute } from "../domain/task-routing";
 import { startTask } from "../api/workflows";
 import { createTask, getModels, getTask, patchTask } from "../api/tasks";
 import type { SourceFile, SourceFileStatus } from "../types/files";
@@ -92,6 +93,16 @@ watch(
       fillForm(task);
       loadedTaskId = task.id;
     }
+  },
+  { immediate: true },
+);
+
+watch(
+  () => taskQuery.data.value,
+  (task) => {
+    if (!task) return;
+    const destination = resolveTaskRoute(task);
+    if (route.path !== destination) void router.replace(destination);
   },
   { immediate: true },
 );

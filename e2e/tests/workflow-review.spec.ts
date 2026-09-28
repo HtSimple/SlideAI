@@ -175,6 +175,7 @@ test("complete requirement and outline reviews with page allocation checks", asy
   await page.getByLabel("页数", { exact: true }).fill("6");
   await page.getByLabel("条目标题").fill("趋势驱动因素");
   await page.getByRole("button", { name: "确认大纲并开始生成" }).click();
-  await expect(page.getByRole("heading", { name: "大纲已确认" })).toBeVisible();
+  await expect(page).toHaveURL(`/tasks/${taskId}/edit`);
+  await expect(page.getByRole("button", { name: "解析需求" })).toBeVisible();
   expect(outline.sections[0]?.items[0]?.title).toBe("趋势驱动因素");
 });

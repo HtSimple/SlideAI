@@ -4,9 +4,11 @@ from uuid import UUID
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langgraph.types import Command
 
+from slideai.application.content.writer import PageRetriever, ProgressReporter, SlideRepository
 from slideai.application.models.gateway import ModelGateway
 from slideai.core.config import Settings
 from slideai.core.errors import DomainError
+from slideai.domain.content.models import SlideProgress
 from slideai.domain.requirements.models import Outline, StructuredRequirement
 from slideai.domain.tasks.complexity import TaskComplexity
 from slideai.domain.tasks.models import TaskStatus
@@ -21,6 +23,9 @@ async def execute_persisted_workflow(
     task_id: UUID,
     *,
     resume: dict[str, Any] | None = None,
+    retriever: PageRetriever,
+    slide_repository: SlideRepository,
+    progress_reporter: ProgressReporter | None = None,
 ) -> dict[str, Any]:
     task = await repository.get(task_id)
     if task is None:
@@ -30,7 +35,13 @@ async def execute_persisted_workflow(
     try:
         async with AsyncPostgresSaver.from_conn_string(settings.checkpoint_database_url) as saver:
             await saver.setup()
-            graph = build_slide_graph(gateway, checkpointer=saver)
+            graph = build_slide_graph(
+                gateway,
+                checkpointer=saver,
+                retriever=retriever,
+                slide_repository=slide_repository,
+                progress_reporter=progress_reporter,
+            )
             command: Any = (
                 Command(resume=resume) if resume is not None else build_initial_state(task)
             )
@@ -77,6 +88,17 @@ async def _persist_projection(
     elif result.get("outline_confirmed"):
         update["status"] = TaskStatus.READY
         update["current_stage"] = "outline_confirmed"
+    if result.get("final_markdown"):
+        update["status"] = TaskStatus.COMPLETED
+        update["current_stage"] = "completed"
+        total_batches = task.generation_progress.total_batches if task.generation_progress else 0
+        page_count = len(result.get("slides_content", []))
+        update["generation_progress"] = SlideProgress(
+            total_pages=page_count,
+            completed_pages=page_count,
+            total_batches=total_batches,
+            completed_batches=total_batches,
+        )
 
     updated = task.model_copy(update=update)
     await repository.update(updated, expected_version=task.version)

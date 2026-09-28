@@ -5,6 +5,7 @@ from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from slideai.domain.content.models import SlideProgress
 from slideai.domain.requirements.models import Outline, StructuredRequirement
 from slideai.domain.tasks.complexity import TaskComplexity, score_complexity
 
@@ -64,6 +65,7 @@ class TaskRecord(BaseModel):
     complexity: TaskComplexity
     structured_requirement: StructuredRequirement | None = None
     outline: Outline | None = None
+    generation_progress: SlideProgress | None = None
     version: int = 1
     created_at: datetime
     updated_at: datetime

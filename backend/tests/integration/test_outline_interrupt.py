@@ -3,6 +3,7 @@ from collections import deque
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import Any
+from uuid import UUID
 
 import pytest
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
@@ -11,6 +12,7 @@ from pydantic import BaseModel
 
 from slideai.application.models.gateway import ModelGateway
 from slideai.core.config import get_settings
+from slideai.domain.content.models import SlideBatch, SlideContent, SlideDraft
 from slideai.domain.models.catalog import ModelCatalog, ModelDefinition, NodePolicy
 from slideai.domain.requirements.models import Outline, OutlineItem, OutlineSection
 from slideai.domain.tasks.complexity import ComplexityTier
@@ -114,6 +116,38 @@ def _outline() -> Outline:
     )
 
 
+def _slide_batches() -> list[dict[str, Any]]:
+    return [
+        SlideBatch(
+            slides=[
+                SlideDraft(
+                    page_number=page_number,
+                    title=f"Page {page_number}",
+                    bullets=["Evidence-led finding", "Actionable implication"],
+                )
+                for page_number in range(first, last + 1)
+            ]
+        ).model_dump(mode="json")
+        for first, last in ((1, 5), (6, 10), (11, 12))
+    ]
+
+
+class EmptyRetriever:
+    async def search(self, task_id: UUID, query: str):
+        return []
+
+
+class MemorySlides:
+    def __init__(self) -> None:
+        self.slides: list[SlideContent] = []
+
+    async def list_for_task(self, task_id: UUID) -> list[SlideContent]:
+        return list(self.slides)
+
+    async def upsert_batch(self, task_id: UUID, slides: list[SlideContent]) -> None:
+        self.slides.extend(slides)
+
+
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_outline_interrupt_resumes_after_worker_restart() -> None:
@@ -135,7 +169,13 @@ async def test_outline_interrupt_resumes_after_worker_restart() -> None:
 
     async with AsyncPostgresSaver.from_conn_string(settings.checkpoint_database_url) as saver:
         await saver.setup()
-        graph = build_slide_graph(_gateway([]), checkpointer=saver)
+        slide_repository = MemorySlides()
+        graph = build_slide_graph(
+            _gateway(_slide_batches()),
+            checkpointer=saver,
+            retriever=EmptyRetriever(),
+            slide_repository=slide_repository,
+        )
         resumed = await graph.ainvoke(
             Command(
                 resume={"kind": "outline_confirmed", "outline": outline.model_dump(mode="json")}
@@ -143,4 +183,7 @@ async def test_outline_interrupt_resumes_after_worker_restart() -> None:
             config,
         )
         assert resumed["outline_confirmed"] is True
+        assert [slide["page_number"] for slide in resumed["slides_content"]] == list(range(1, 13))
+        assert len(slide_repository.slides) == 12
+        assert resumed["final_markdown"].startswith("# Industry outlook\n")
         await saver.adelete_thread(str(task.id))

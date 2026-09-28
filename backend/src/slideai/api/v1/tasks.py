@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from slideai.api.dependencies import get_task_service
 from slideai.application.tasks.service import TaskService
+from slideai.domain.content.models import SlideProgress
 from slideai.domain.models.catalog import ModelCatalog, PublicModel
 from slideai.domain.tasks.models import (
     CreateTaskCommand,
@@ -30,6 +31,7 @@ class TaskResponse(BaseModel):
     complexity: dict[str, Any]
     structured_requirement: dict[str, Any] | None
     outline: dict[str, Any] | None
+    generation_progress: SlideProgress | None
     version: int
     created_at: str
     updated_at: str
@@ -136,6 +138,7 @@ def _task_response(task: TaskRecord) -> TaskResponse:
             else None
         ),
         outline=task.outline.model_dump(mode="json") if task.outline is not None else None,
+        generation_progress=task.generation_progress,
         version=task.version,
         created_at=task.created_at.isoformat(),
         updated_at=task.updated_at.isoformat(),

@@ -3,6 +3,8 @@ import TaskCenterView from "./views/TaskCenterView.vue";
 import TaskEditView from "./views/TaskEditView.vue";
 import RequirementReviewView from "./views/RequirementReviewView.vue";
 import OutlineEditorView from "./views/OutlineEditorView.vue";
+import GenerationProgressView from "./views/GenerationProgressView.vue";
+import TextResultView from "./views/TextResultView.vue";
 
 const router = createRouter({
   history: createWebHistory(),
@@ -20,6 +22,16 @@ const router = createRouter({
       path: "/tasks/:taskId/outline",
       name: "task-outline",
       component: OutlineEditorView,
+    },
+    {
+      path: "/tasks/:taskId/progress",
+      name: "task-progress",
+      component: GenerationProgressView,
+    },
+    {
+      path: "/tasks/:taskId/result",
+      name: "task-result",
+      component: TextResultView,
     },
   ],
 });

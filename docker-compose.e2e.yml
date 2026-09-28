@@ -1,0 +1,8 @@
+services:
+  api:
+    environment:
+      GENERATION_PROVIDER: fake
+
+  worker:
+    environment:
+      GENERATION_PROVIDER: fake

@@ -3,6 +3,7 @@ import { computed, ref } from "vue";
 import { useQuery } from "@tanstack/vue-query";
 import { RouterLink } from "vue-router";
 import { getTasks } from "../api/tasks";
+import { resolveTaskRoute } from "../domain/task-routing";
 import type { TaskRecord, TaskStatus } from "../types/tasks";
 
 const pageSize = 20;
@@ -84,11 +85,15 @@ function filterByStatus(filter: string): void {
 function resolveAction(task: TaskRecord): string {
   if (task.status === "DRAFT" || task.status === "READY") return "继续编辑";
   if (task.status === "COMPLETED") return "查看结果";
-  if (task.status === "FAILED_RETRYABLE") return "重试";
+  if (task.status === "FAILED_RETRYABLE") return "查看状态";
   if (task.status.startsWith("WAITING_")) return "继续处理";
   if (task.status === "RUNNING" || task.status === "FILES_PROCESSING")
     return "查看进度";
   return "查看详情";
+}
+
+function taskRoute(task: TaskRecord): string {
+  return resolveTaskRoute(task);
 }
 
 function formatDate(value: string): string {
@@ -201,7 +206,7 @@ function formatDate(value: string): string {
           <tbody>
             <tr v-for="task in tasks" :key="task.id">
               <th scope="row">
-                <RouterLink class="task-name" :to="`/tasks/${task.id}/edit`">{{
+                <RouterLink class="task-name" :to="taskRoute(task)">{{
                   task.name
                 }}</RouterLink>
               </th>
@@ -223,11 +228,9 @@ function formatDate(value: string): string {
               </td>
               <td>{{ formatDate(task.updated_at) }}</td>
               <td>
-                <RouterLink
-                  class="action-link"
-                  :to="`/tasks/${task.id}/edit`"
-                  >{{ resolveAction(task) }}</RouterLink
-                >
+                <RouterLink class="action-link" :to="taskRoute(task)">{{
+                  resolveAction(task)
+                }}</RouterLink>
               </td>
             </tr>
           </tbody>

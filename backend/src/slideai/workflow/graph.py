@@ -1,11 +1,21 @@
 import json
 from typing import Any, Literal, NotRequired, TypedDict, cast
+from uuid import UUID
 
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import interrupt
 
+from slideai.application.content.gateway_writer import GatewayBatchWriter
+from slideai.application.content.markdown import render_markdown
+from slideai.application.content.writer import (
+    PageRetriever,
+    ProgressReporter,
+    SlideRepository,
+    write_slide_batches,
+)
 from slideai.application.models.gateway import ModelGateway
+from slideai.domain.content.models import SlideContent
 from slideai.domain.requirements.models import Outline, StructuredRequirement
 from slideai.domain.requirements.validation import validate_outline
 from slideai.domain.tasks.complexity import score_complexity
@@ -23,6 +33,8 @@ class SlideState(TypedDict):
     workflow_stage: NotRequired[str]
     outline_issues: NotRequired[list[dict[str, Any]]]
     outline_confirmed: NotRequired[bool]
+    slides_content: NotRequired[list[dict[str, Any]]]
+    final_markdown: NotRequired[str]
 
 
 def build_initial_state(task: TaskRecord) -> SlideState:
@@ -39,6 +51,9 @@ def build_slide_graph(
     gateway: ModelGateway,
     *,
     checkpointer: BaseCheckpointSaver[Any] | None = None,
+    retriever: PageRetriever | None = None,
+    slide_repository: SlideRepository | None = None,
+    progress_reporter: ProgressReporter | None = None,
 ) -> Any:
     async def parse_requirement(state: SlideState) -> dict[str, object]:
         raw = RawRequirement.model_validate(state["raw_requirement"])
@@ -166,6 +181,40 @@ def build_slide_graph(
             "workflow_stage": "outline_confirmed",
         }
 
+    async def write_slides(state: SlideState) -> dict[str, object]:
+        if retriever is None or slide_repository is None:
+            raise RuntimeError("Slide writing requires a retriever and slide repository.")
+        requirement = StructuredRequirement.model_validate(state.get("structured_requirement"))
+        outline = Outline.model_validate(state.get("outline"))
+        slides = await write_slide_batches(
+            task_id=UUID(state["task_id"]),
+            requirement=requirement,
+            outline=outline,
+            writer=GatewayBatchWriter(gateway),
+            retriever=retriever,
+            repository=slide_repository,
+            preference=ModelPreference.model_validate(state["model_preference"]),
+            complexity=_complexity(state),
+            progress_reporter=progress_reporter,
+        )
+        return {
+            "slides_content": [slide.model_dump(mode="json") for slide in slides],
+            "workflow_stage": "generate_markdown",
+        }
+
+    def generate_markdown(state: SlideState) -> dict[str, object]:
+        outline = Outline.model_validate(state.get("outline"))
+        slides = [SlideContent.model_validate(item) for item in state.get("slides_content", [])]
+        target_count = len(slides)
+        if target_count != len({slide.page_number for slide in slides}):
+            raise ValueError("Generated pages must not contain duplicate page numbers.")
+        if [slide.page_number for slide in slides] != list(range(1, target_count + 1)):
+            raise ValueError("Generated page numbers must be continuous.")
+        return {
+            "final_markdown": render_markdown(outline, slides),
+            "workflow_stage": "completed",
+        }
+
     builder = cast(Any, StateGraph(SlideState))
     builder.add_node("parse_requirement", parse_requirement)
     builder.add_node("review_requirement", review_requirement)
@@ -173,6 +222,8 @@ def build_slide_graph(
     builder.add_node("plan_outline", plan_outline)
     builder.add_node("validate_outline", validate_outline_node)
     builder.add_node("review_outline", review_outline)
+    builder.add_node("write_slides", write_slides)
+    builder.add_node("generate_markdown", generate_markdown)
     builder.add_edge(START, "parse_requirement")
     builder.add_conditional_edges(
         "parse_requirement",
@@ -187,7 +238,9 @@ def build_slide_graph(
     builder.add_edge("calculate_complexity", "plan_outline")
     builder.add_edge("plan_outline", "validate_outline")
     builder.add_edge("validate_outline", "review_outline")
-    builder.add_edge("review_outline", END)
+    builder.add_edge("review_outline", "write_slides")
+    builder.add_edge("write_slides", "generate_markdown")
+    builder.add_edge("generate_markdown", END)
     return builder.compile(checkpointer=checkpointer)
 
 

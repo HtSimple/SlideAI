@@ -67,7 +67,7 @@ class OutlineService:
         updated = task.model_copy(
             update={
                 "status": TaskStatus.RUNNING,
-                "current_stage": "outline_confirmed",
+                "current_stage": "write_slides",
                 "version": task.version + 1,
                 "updated_at": self.clock(),
             }

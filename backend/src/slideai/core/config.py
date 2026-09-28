@@ -1,5 +1,6 @@
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -16,6 +17,7 @@ class Settings(BaseSettings):
     chroma_port: int = Field(default=8000, ge=1, le=65535)
     file_storage_root: Path = Path("/var/lib/slideai/files")
     model_catalog_path: Path = Path("/app/config/models.yaml")
+    generation_provider: Literal["openai_compatible", "fake"] = "openai_compatible"
     cors_origins: str = "http://localhost:4173"
     log_level: str = "INFO"
     max_auto_revisions: int = Field(default=2, ge=0, le=10)

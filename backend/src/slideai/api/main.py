@@ -19,12 +19,14 @@ from slideai.api.health import router as health_router
 from slideai.api.v1.files import router as files_router
 from slideai.api.v1.outlines import router as outlines_router
 from slideai.api.v1.requirements import router as requirements_router
+from slideai.api.v1.slides import router as slides_router
 from slideai.api.v1.tasks import router as tasks_router
+from slideai.application.content.service import SlideContentService
 from slideai.application.files.embedding import create_embedding_gateway
 from slideai.application.files.processor import FileProcessor
 from slideai.application.files.service import FileService
 from slideai.application.files.validation import FileLimits
-from slideai.application.models.gateway import ModelGateway, OpenAICompatibleProvider
+from slideai.application.models.factory import create_model_runtime
 from slideai.application.outlines.service import OutlineService
 from slideai.application.requirements.service import RequirementService
 from slideai.application.tasks.service import TaskService
@@ -32,11 +34,11 @@ from slideai.application.workflows.service import WorkflowControlService
 from slideai.core.config import Settings, get_settings
 from slideai.core.errors import DomainError
 from slideai.core.logging import configure_logging, request_id_context
-from slideai.domain.models.catalog import ModelCatalog
 from slideai.infrastructure.celery_queue.file_queue import CeleryFileQueue
 from slideai.infrastructure.celery_queue.workflow_queue import CeleryWorkflowQueue
 from slideai.infrastructure.db.file_repository import SqlFileRepository
 from slideai.infrastructure.db.session import create_engine
+from slideai.infrastructure.db.slide_repository import SqlSlideRepository
 from slideai.infrastructure.db.task_repository import SqlTaskRepository
 from slideai.infrastructure.files.local_storage import LocalFileStorage
 from slideai.infrastructure.redis.task_lock import TaskLock
@@ -109,6 +111,7 @@ def create_app(
     )
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
     task_repository = SqlTaskRepository(session_factory)
+    slide_repository = SqlSlideRepository(session_factory)
     file_repository = SqlFileRepository(session_factory)
     file_storage = LocalFileStorage(configured.file_storage_root)
     embedding_gateway = create_embedding_gateway(configured)
@@ -127,7 +130,9 @@ def create_app(
         chunk_overlap=configured.chunk_overlap_tokens,
         embedding_version=configured.embedding_version,
     )
-    model_catalog = ModelCatalog.from_yaml(configured.model_catalog_path)
+    model_catalog, model_gateway = create_model_runtime(
+        configured, audit_writer=task_repository.record_model_call
+    )
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncGenerator[None, None]:
@@ -148,6 +153,8 @@ def create_app(
     )
     app.state.settings = configured
     app.state.task_repository = task_repository
+    app.state.slide_repository = slide_repository
+    app.state.slide_content_service = SlideContentService(task_repository, slide_repository)
     app.state.file_repository = file_repository
     app.state.file_processor = file_processor
     app.state.file_service = FileService(
@@ -172,12 +179,7 @@ def create_app(
     app.state.requirement_service = RequirementService(task_repository, workflow_queue)
     app.state.outline_service = OutlineService(task_repository, workflow_queue)
     app.state.model_catalog = model_catalog
-    app.state.model_gateway = ModelGateway(
-        model_catalog=model_catalog,
-        providers={"openai_compatible": OpenAICompatibleProvider()},
-        audit_writer=task_repository.record_model_call,
-        retries=configured.model_retry_count,
-    )
+    app.state.model_gateway = model_gateway
     app.state.task_lock = TaskLock(redis_client)
 
     app.add_middleware(
@@ -260,6 +262,7 @@ def create_app(
     app.include_router(files_router)
     app.include_router(requirements_router)
     app.include_router(outlines_router)
+    app.include_router(slides_router)
     return app
 
 

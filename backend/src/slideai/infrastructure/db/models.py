@@ -34,6 +34,7 @@ class GenerationTaskRow(Base):
     complexity: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     structured_requirement: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     outline: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    generation_progress: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
@@ -145,5 +146,32 @@ class DocumentChunkRow(Base):
     embedding_model: Mapped[str] = mapped_column(String(200), nullable=False)
     embedding_version: Mapped[str] = mapped_column(String(80), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class SlidePageRow(Base):
+    __tablename__ = "slide_pages"
+    __table_args__ = (
+        UniqueConstraint("task_id", "page_number", name="uq_slide_pages_task_page"),
+        CheckConstraint("page_number > 0", name="ck_slide_pages_page_number_positive"),
+    )
+
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
+    task_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("generation_tasks.id", ondelete="CASCADE"), index=True
+    )
+    page_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    section_id: Mapped[str] = mapped_column(String(80), nullable=False)
+    outline_item_id: Mapped[str] = mapped_column(String(80), nullable=False)
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    bullets: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    speaker_notes: Mapped[str | None] = mapped_column(Text)
+    citations: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False, default=list)
+    verification_notes: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

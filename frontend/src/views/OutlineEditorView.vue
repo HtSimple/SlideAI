@@ -5,6 +5,7 @@ import { RouterLink, useRoute, useRouter } from "vue-router";
 import { getTask } from "../api/tasks";
 import { confirmOutline, getOutline, updateOutline } from "../api/workflows";
 import { apiErrorMessage } from "../api/client";
+import { resolveTaskRoute } from "../domain/task-routing";
 import type { Outline, OutlineSection } from "../types/workflow";
 
 const route = useRoute();
@@ -77,12 +78,13 @@ watch(
 );
 
 watch(
-  () => task.value?.status,
-  (status) => {
-    if (status === "WAITING_REQUIREMENT_INPUT") {
-      void router.replace(`/tasks/${taskId}/requirement`);
-    }
+  () => task.value,
+  (value) => {
+    if (!value) return;
+    const destination = resolveTaskRoute(value);
+    if (route.path !== destination) void router.replace(destination);
   },
+  { immediate: true },
 );
 
 function moveSection(index: number, direction: -1 | 1): void {

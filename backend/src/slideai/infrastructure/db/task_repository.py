@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from slideai.core.errors import DomainError
+from slideai.domain.content.models import SlideProgress
 from slideai.domain.tasks.models import TaskRecord
 from slideai.infrastructure.db.models import GenerationTaskRow, ModelCallRow
 
@@ -74,6 +77,16 @@ class SqlTaskRepository:
                 )
             _apply_record(row, task)
 
+    async def update_progress(self, task_id: UUID, progress: SlideProgress) -> None:
+        async with self.sessions() as session, session.begin():
+            row = await session.get(GenerationTaskRow, task_id, with_for_update=True)
+            if row is None:
+                raise DomainError("TASK_NOT_FOUND", "Task was not found.")
+            row.generation_progress = progress.model_dump(mode="json")
+            row.current_stage = "write_slides"
+            row.version += 1
+            row.updated_at = datetime.now(UTC)
+
     async def delete(self, task_id: UUID) -> None:
         async with self.sessions() as session, session.begin():
             row = await session.get(GenerationTaskRow, task_id)
@@ -131,6 +144,11 @@ def _to_row(task: TaskRecord) -> GenerationTaskRow:
             else None
         ),
         outline=task.outline.model_dump(mode="json") if task.outline is not None else None,
+        generation_progress=(
+            task.generation_progress.model_dump(mode="json")
+            if task.generation_progress is not None
+            else None
+        ),
         version=task.version,
         created_at=task.created_at,
         updated_at=task.updated_at,
@@ -150,6 +168,11 @@ def _apply_record(row: GenerationTaskRow, task: TaskRecord) -> None:
         else None
     )
     row.outline = task.outline.model_dump(mode="json") if task.outline is not None else None
+    row.generation_progress = (
+        task.generation_progress.model_dump(mode="json")
+        if task.generation_progress is not None
+        else None
+    )
     row.version = task.version
     row.updated_at = task.updated_at
 
@@ -166,6 +189,7 @@ def _to_record(row: GenerationTaskRow) -> TaskRecord:
             "complexity": row.complexity,
             "structured_requirement": row.structured_requirement,
             "outline": row.outline,
+            "generation_progress": row.generation_progress,
             "version": row.version,
             "created_at": row.created_at,
             "updated_at": row.updated_at,

@@ -9,6 +9,7 @@ import {
   updateRequirement,
 } from "../api/workflows";
 import { apiErrorMessage } from "../api/client";
+import { resolveTaskRoute } from "../domain/task-routing";
 import type { StructuredRequirement } from "../types/workflow";
 
 const route = useRoute();
@@ -67,12 +68,13 @@ watch(
 );
 
 watch(
-  () => task.value?.status,
-  (status) => {
-    if (status === "WAITING_OUTLINE_CONFIRMATION") {
-      void router.replace(`/tasks/${taskId}/outline`);
-    }
+  () => task.value,
+  (value) => {
+    if (!value) return;
+    const destination = resolveTaskRoute(value);
+    if (route.path !== destination) void router.replace(destination);
   },
+  { immediate: true },
 );
 
 function requirementsPayload(): StructuredRequirement {
