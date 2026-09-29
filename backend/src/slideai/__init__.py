@@ -1,1 +1,0 @@
-"""SlideAI application package."""
